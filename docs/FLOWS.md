@@ -123,4 +123,4 @@ The bot has no administrator allowlist or chat/user authorization beyond state-k
 
 ## 6. Browser automation: no flow found
 
-Despite the package dependency, no implementation invokes Puppeteer. There is no browser launch, page navigation, selector, login form, cookie/local-storage handling, screenshot, retry, concurrency control, or close sequence. Any description of browser interaction with Hago would be speculative and is therefore omitted.
+No implementation invokes Puppeteer. The historical package-only dependency was removed from the clean-root adapter. There is no browser launch, page navigation, selector, login form, cookie/local-storage handling, screenshot, retry, concurrency control, or close sequence. Any description of browser interaction with Hago would be speculative and is therefore omitted.

@@ -94,7 +94,7 @@ Sessions are `Map` entries keyed by `ctx.from.id` and contain a step plus phone/
 
 ## Puppeteer/browser automation
 
-No Puppeteer/browsing behavior exists in the source. A repository-wide source search finds no `require("puppeteer")`, `launch()`, `Page`, browser selector, navigation, cookie persistence, local storage, retry, or browser close call. Consequently there is no actual browser automation flow, browser lifecycle, concurrency policy, or Chromium executable requirement to document. The declared package and its installation implications are covered in [Configuration](CONFIGURATION.md).
+No Puppeteer/browsing behavior exists in the source. The clean-root adapter removed the historical package-only dependency after confirming no runtime usage. Consequently there is no actual browser automation flow, browser lifecycle, concurrency policy, or Chromium executable requirement to document.
 
 ## Shutdown and failures
 

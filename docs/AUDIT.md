@@ -90,11 +90,11 @@ This is a documentation-only, static audit of the tracked executable source. Fin
 
 ## Low
 
-### Declared Puppeteer dependency is unused
+### Historical unused Puppeteer dependency
 
-**Evidence:** `package.json` declares `puppeteer`; repository source has no import/reference except dependency metadata. Installed package metadata has an install script and Node engine requirement.
+**Historical evidence:** the pre-recovery package declared `puppeteer`, while source had no import/reference except dependency metadata.
 
-**Observation:** it adds install/runtime surface without an active code path. No browser automation exists to justify it in current source.
+**Current status:** the clean-root adapter removed the obsolete dependency. No browser automation exists in current source, and production installation no longer has Puppeteer engine or browser-install implications.
 
 ### Unused imports and fields
 
