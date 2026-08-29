@@ -8,6 +8,9 @@ Copy `.env.example` to `.env` and replace placeholders outside source control. N
 | `HOST` | No | `127.0.0.1` | Validated HTTP bind hostname or IP. For the Nginx deployment, keep this at loopback so the Node service is not exposed on all interfaces. |
 | `MONGO_URI` | Yes for API | None | MongoDB connection string. Startup waits for a connection. |
 | `INTERNAL_API_KEY` | Yes for trusted backend | None | Server-to-server key sent as `x-internal-api-key`; never expose it to browser code. |
+| `MULTI_CLIENT_AUTH_ENABLED` | No | `false` | Enables Prompt 2 client-auth configuration validation. No V2 HTTP routes are mounted until Prompt 3. |
+| `CLIENT_API_KEY_PEPPER` | When multi-client auth is enabled; required by the operator CLI | None | Base64-encoded exactly 32-byte server-side HMAC pepper used to verify generated Client API Key secrets. Store in a secret manager, never MongoDB. |
+| `CLIENT_DATA_ENCRYPTION_KEY` | When multi-client auth is enabled | None | Separate Base64-encoded exactly 32-byte AES-256-GCM key for V2 LoginChallenge phone encryption and lookup protection. Do not reuse the Hago session key. |
 | `HAGO_SESSION_ENCRYPTION_KEY` | Yes for API | None | Base64-encoded, exactly 32-byte AES-256-GCM key for `hagouid` and `uaasCookie` at rest. |
 | `HAGO_REQUEST_TIMEOUT_MS` | No | `15000` | Hago integration HTTP timeout. The default matches the confirmed recharge-agent bundle timeout; an explicit positive deployment override remains supported. |
 | `HAGO_TURNOVER_BASE_URL` | No | `https://db-turnover.ihago.net` | Read-only turnover service base URL from captured traffic. |
@@ -20,6 +23,8 @@ Copy `.env.example` to `.env` and replace placeholders outside source control. N
 | `SWAGGER_ENABLED` | No | Unset | When unset, enables `/docs` and `/openapi.json` outside production and disables them in production. Set `true` to explicitly expose the local API contract in production; set `false` to disable it. |
 
 The API fails startup when `MONGO_URI`, `INTERNAL_API_KEY`, or `HAGO_SESSION_ENCRYPTION_KEY` is missing, when the encryption key is not valid Base64 32-byte material, or when numeric timeouts are invalid. Keep the encryption key in a secret manager. `INTERNAL_API_KEY` authenticates only the trusted website/backend caller. A browser must send its FingerprintJS device ID to that backend, not directly to this adapter. `HAGO_COUNTRY` is a locale header, not the numeric phone `countryCode` used by UAAS.
+
+Prompt 2 preserves that V1 compatibility behavior. It introduces distinct, versioned Client API Keys for future V2 website/backend integrations. A Client API Key is not a Hago credential and is never accepted in the `x-internal-api-key` header. When `MULTI_CLIENT_AUTH_ENABLED=true`, startup additionally requires valid `CLIENT_API_KEY_PEPPER` and `CLIENT_DATA_ENCRYPTION_KEY` values. Generate each with a cryptographically secure 32-byte secret, for example `openssl rand -base64 32`, and keep both in the secret manager.
 
 There is no configuration override for Hago session derivation. After successful SMS auth, the adapter prefers complete authoritative `Set-Cookie` values; otherwise it applies the fixed, bundle-confirmed browser derivation and fails closed if the response is incomplete or invalid.
 

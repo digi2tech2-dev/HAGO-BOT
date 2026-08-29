@@ -1,4 +1,3 @@
-const crypto = require("crypto");
 const net = require("net");
 
 function requireNonEmpty(env, name) {
@@ -50,11 +49,27 @@ function isNobilityEnabled(env = process.env) {
 }
 
 function parseSessionEncryptionKey(value) {
-  const encoded = requireNonEmpty({ HAGO_SESSION_ENCRYPTION_KEY: value }, "HAGO_SESSION_ENCRYPTION_KEY");
-  if (!/^[A-Za-z0-9+/]+={0,2}$/.test(encoded)) throw new Error("HAGO_SESSION_ENCRYPTION_KEY must be base64-encoded 32-byte key material");
+  return parseBase64Secret(value, "HAGO_SESSION_ENCRYPTION_KEY");
+}
+
+function parseBase64Secret(value, name) {
+  const encoded = requireNonEmpty({ [name]: value }, name);
+  if (!/^[A-Za-z0-9+/]+={0,2}$/.test(encoded)) throw new Error(`${name} must be base64-encoded 32-byte key material`);
   const key = Buffer.from(encoded, "base64");
-  if (key.length !== 32 || key.toString("base64") !== encoded) throw new Error("HAGO_SESSION_ENCRYPTION_KEY must be base64-encoded 32-byte key material");
+  if (key.length !== 32 || key.toString("base64") !== encoded) throw new Error(`${name} must be base64-encoded 32-byte key material`);
   return key;
+}
+
+function isMultiClientAuthEnabled(env = process.env) {
+  return env.MULTI_CLIENT_AUTH_ENABLED === "true";
+}
+
+function parseClientApiKeyPepper(value) {
+  return parseBase64Secret(value, "CLIENT_API_KEY_PEPPER");
+}
+
+function parseClientDataEncryptionKey(value) {
+  return parseBase64Secret(value, "CLIENT_DATA_ENCRYPTION_KEY");
 }
 
 function validateRuntimeConfig(env = process.env) {
@@ -62,6 +77,7 @@ function validateRuntimeConfig(env = process.env) {
   const internalApiKey = requireNonEmpty(env, "INTERNAL_API_KEY");
   const sessionEncryptionKey = parseSessionEncryptionKey(env.HAGO_SESSION_ENCRYPTION_KEY);
   const controlledMutation = getControlledMutationConfig(env);
+  const multiClientAuthEnabled = isMultiClientAuthEnabled(env);
   return {
     mongoUri,
     internalApiKey,
@@ -71,6 +87,9 @@ function validateRuntimeConfig(env = process.env) {
     hagoRequestTimeoutMs: parsePositiveInteger(env.HAGO_REQUEST_TIMEOUT_MS, "HAGO_REQUEST_TIMEOUT_MS", 15000),
     ...controlledMutation,
     nobilityEnabled: isNobilityEnabled(env),
+    multiClientAuthEnabled,
+    clientApiKeyPepper: multiClientAuthEnabled ? parseClientApiKeyPepper(env.CLIENT_API_KEY_PEPPER) : null,
+    clientDataEncryptionKey: multiClientAuthEnabled ? parseClientDataEncryptionKey(env.CLIENT_DATA_ENCRYPTION_KEY) : null,
   };
 }
 
@@ -81,4 +100,9 @@ function getLocalReadiness({ env = process.env, mongoose }) {
   return { ready: configValid && mongoReady, configValid, mongoReady };
 }
 
-module.exports = { parsePositiveInteger, parsePositiveAmount, parseHost, parseSessionEncryptionKey, getControlledMutationConfig, isNobilityEnabled, validateRuntimeConfig, getLocalReadiness };
+module.exports = {
+  requireNonEmpty, parsePositiveInteger, parsePositiveAmount, parseHost, parseBase64Secret,
+  parseSessionEncryptionKey, parseClientApiKeyPepper, parseClientDataEncryptionKey,
+  getControlledMutationConfig, isNobilityEnabled, isMultiClientAuthEnabled,
+  validateRuntimeConfig, getLocalReadiness,
+};

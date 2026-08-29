@@ -2,6 +2,7 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const crypto = require("node:crypto");
+const mongoose = require("mongoose");
 const { EventEmitter } = require("node:events");
 const { isUaasSuccess, parseSetCookies, parseTurnoverWallet, parseTurnoverHistory, parseYmicroUser } = require("../src/integrations/hago/parsers");
 const { buildCookieHeader, sessionFromAuthResponse } = require("../src/integrations/hago/session");
@@ -27,7 +28,14 @@ const { prepareRechargeMutation } = hagoService;
 const { SessionSecretCipher, isEncryptedSessionSecret } = require("../src/integrations/hago/sessionSecrets");
 const { encryptSessionForStorage, decryptStoredSession } = require("../src/integrations/hago/session");
 const { combineUaasCookie, decryptSsession, deriveBrowserSession, encryptRawBase64, parseSsession, serializeAuthPayload } = require("../src/integrations/hago/sessionDerivation");
-const { parseSessionEncryptionKey, parseHost, validateRuntimeConfig, getControlledMutationConfig, isNobilityEnabled, getLocalReadiness } = require("../src/config/runtime");
+const { parseSessionEncryptionKey, parseHost, parseClientApiKeyPepper, parseClientDataEncryptionKey, validateRuntimeConfig, getControlledMutationConfig, isNobilityEnabled, getLocalReadiness } = require("../src/config/runtime");
+const Client = require("../src/models/Client");
+const ClientApiKey = require("../src/models/ClientApiKey");
+const LoginChallenge = require("../src/models/LoginChallenge");
+const { generateClientApiKey, parseClientApiKey, createClientAuthenticator } = require("../src/services/clientKeyService");
+const { buildChallengeRecord, isOwnedActiveChallenge, verifyChallengeDeviceBinding } = require("../src/services/loginChallengeService");
+const { createClientAuthMiddleware } = require("../src/middleware/clientAuth");
+const { ClientDataCipher } = require("../src/security/clientDataSecrets");
 const { requestId } = require("../src/middleware/requestId");
 const createApp = require("../src/app");
 const botController = require("../src/controllers/botController");
@@ -280,6 +288,118 @@ test("runtime configuration accepts a 32-byte base64 key and rejects invalid cri
   assert.equal(isNobilityEnabled(validEnv), false);
   assert.throws(() => validateRuntimeConfig({ ...validEnv, HAGO_CONTROLLED_MUTATION_MODE: "true" }), /HAGO_CONTROLLED_MUTATION_MAX_AMOUNT/);
   assert.throws(() => validateRuntimeConfig({ ...validEnv, HAGO_CONTROLLED_MUTATION_MODE: "true", HAGO_CONTROLLED_MUTATION_MAX_AMOUNT: "0" }), /HAGO_CONTROLLED_MUTATION_MAX_AMOUNT/);
+  const clientSecret = Buffer.alloc(32, 12).toString("base64");
+  assert.deepEqual(parseClientApiKeyPepper(clientSecret), Buffer.alloc(32, 12));
+  assert.deepEqual(parseClientDataEncryptionKey(clientSecret), Buffer.alloc(32, 12));
+  assert.throws(() => validateRuntimeConfig({ ...validEnv, MULTI_CLIENT_AUTH_ENABLED: "true" }), /CLIENT_API_KEY_PEPPER/);
+  assert.equal(validateRuntimeConfig({ ...validEnv, MULTI_CLIENT_AUTH_ENABLED: "true", CLIENT_API_KEY_PEPPER: clientSecret, CLIENT_DATA_ENCRYPTION_KEY: clientSecret }).multiClientAuthEnabled, true);
+});
+
+test("multi-client keys are parsed, HMAC-digested, and never serialized with their digest", () => {
+  const pepper = Buffer.alloc(32, 19);
+  const generatedA = generateClientApiKey({ pepper });
+  const generatedB = generateClientApiKey({ pepper });
+  assert.notEqual(generatedA.fullKey, generatedB.fullKey);
+  assert.match(generatedA.fullKey, /^hago_live_v1_[A-Za-z0-9_-]{22}_[A-Za-z0-9_-]{43}$/);
+  assert.equal(parseClientApiKey(generatedA.fullKey).keyId, generatedA.keyId);
+  const underscoreKey = generateClientApiKey({ pepper, randomBytes: (length) => Buffer.alloc(length, 0xff) });
+  const parsedUnderscoreKey = parseClientApiKey(underscoreKey.fullKey);
+  assert.equal(parsedUnderscoreKey.keyId, underscoreKey.keyId, "fixed-width parser preserves an underscore-containing keyId");
+  assert.equal(parsedUnderscoreKey.secret, underscoreKey.fullKey.slice(-43), "fixed-width parser preserves an underscore-containing secret");
+  assert.equal(generatedA.secretDigest.length, 64);
+  assert.notEqual(generatedA.secretDigest, parseClientApiKey(generatedA.fullKey).secret);
+  const serialized = new ClientApiKey({ clientId: new mongoose.Types.ObjectId(), keyId: generatedA.keyId, secretDigest: generatedA.secretDigest, label: "production" }).toJSON();
+  assert.equal(serialized.secretDigest, undefined);
+  assert.equal(JSON.stringify(serialized).includes(generatedA.fullKey), false);
+  assert.match(new Client({ name: "Client A" }).publicId, /^cli_[A-Za-z0-9_-]{22}$/);
+  assert.ok(Client.schema.indexes().some(([index, options]) => index.publicId === 1 && options.unique));
+  assert.ok(ClientApiKey.schema.indexes().some(([index, options]) => index.keyId === 1 && options.unique));
+});
+
+test("client authentication isolates keys, lifecycle states, and legacy internal authentication", async () => {
+  const pepper = Buffer.alloc(32, 20);
+  const generatedA = generateClientApiKey({ pepper });
+  const generatedB = generateClientApiKey({ pepper });
+  const clients = [
+    { _id: "507f1f77bcf86cd799439011", publicId: "cli_client_a", status: "ACTIVE" },
+    { _id: "507f1f77bcf86cd799439012", publicId: "cli_client_b", status: "ACTIVE" },
+  ];
+  const keys = [
+    { _id: "key-a", clientId: clients[0]._id, keyId: generatedA.keyId, secretDigest: generatedA.secretDigest, status: "ACTIVE", expiresAt: null },
+    { _id: "key-b", clientId: clients[1]._id, keyId: generatedB.keyId, secretDigest: generatedB.secretDigest, status: "ACTIVE", expiresAt: null },
+  ];
+  let lookups = 0;
+  const authenticator = createClientAuthenticator({
+    pepper,
+    findKeyById: async (keyId) => { lookups += 1; return keys.find((key) => key.keyId === keyId) || null; },
+    findClientById: async (id) => clients.find((client) => client._id === id) || null,
+  });
+  assert.equal((await authenticator.authenticate(generatedA.fullKey)).auth.clientPublicId, "cli_client_a");
+  assert.equal((await authenticator.authenticate(generatedB.fullKey)).auth.clientPublicId, "cli_client_b");
+  assert.deepEqual(await authenticator.authenticate("hago_live_v1_bad"), { ok: false, status: 401 });
+  assert.equal(lookups, 2, "malformed keys must be rejected before a key lookup");
+  const wrongSecret = `${generatedA.fullKey.slice(0, -1)}${generatedA.fullKey.endsWith("A") ? "B" : "A"}`;
+  assert.equal((await authenticator.authenticate(wrongSecret)).status, 401);
+  keys[0].status = "DISABLED";
+  assert.equal((await authenticator.authenticate(generatedA.fullKey)).status, 401);
+  keys[0].status = "REVOKED";
+  assert.equal((await authenticator.authenticate(generatedA.fullKey)).status, 401);
+  assert.equal((await authenticator.authenticate(generatedB.fullKey)).auth.clientPublicId, "cli_client_b", "revoking Client A must not affect Client B");
+  keys[0].status = "ACTIVE";
+  keys[0].expiresAt = new Date(Date.now() - 1);
+  assert.equal((await authenticator.authenticate(generatedA.fullKey)).status, 401);
+  keys[0].expiresAt = null;
+  clients[0].status = "DISABLED";
+  assert.equal((await authenticator.authenticate(generatedA.fullKey)).status, 403);
+  clients[0].status = "ACTIVE";
+  const rotatedA = generateClientApiKey({ pepper });
+  keys.push({ _id: "key-a-rotation", clientId: clients[0]._id, keyId: rotatedA.keyId, secretDigest: rotatedA.secretDigest, status: "ACTIVE", expiresAt: null });
+  assert.equal((await authenticator.authenticate(generatedA.fullKey)).auth.clientPublicId, "cli_client_a");
+  assert.equal((await authenticator.authenticate(rotatedA.fullKey)).auth.clientPublicId, "cli_client_a");
+  keys[0].status = "REVOKED";
+  assert.equal((await authenticator.authenticate(generatedA.fullKey)).status, 401);
+  assert.equal((await authenticator.authenticate(rotatedA.fullKey)).auth.clientPublicId, "cli_client_a");
+  const middleware = createClientAuthMiddleware({ authenticator });
+  let nextCalled = false;
+  const req = { get: (name) => name === "x-client-api-key" ? generatedB.fullKey : undefined };
+  await middleware(req, { status: () => ({ json: () => assert.fail("valid client key must pass") }) }, () => { nextCalled = true; });
+  assert.equal(nextCalled, true);
+  assert.equal(req.auth.clientPublicId, "cli_client_b");
+  const prior = process.env.INTERNAL_API_KEY;
+  process.env.INTERNAL_API_KEY = "legacy-v1-only";
+  try {
+    let status = null;
+    internalAuth({ get: () => generatedB.fullKey }, { status: (value) => { status = value; return { json: () => {} }; } }, () => assert.fail("client key must not pass V1 internal auth"));
+    assert.equal(status, 401);
+    assert.equal((await authenticator.authenticate("legacy-v1-only")).status, 401);
+  } finally {
+    if (prior === undefined) delete process.env.INTERNAL_API_KEY; else process.env.INTERNAL_API_KEY = prior;
+  }
+});
+
+test("LoginChallenge foundation is tenant-owned, encrypted, expiring, and device-bound", () => {
+  const dataKey = Buffer.alloc(32, 21);
+  const now = 1700000000000;
+  const clientA = "507f1f77bcf86cd799439011";
+  const clientB = "507f1f77bcf86cd799439012";
+  const challengeA = buildChallengeRecord({ clientId: clientA, phone: "201000000000", countryCode: "20", deviceId: "synthetic-device-a", dataKey, now: () => now });
+  const challengeB = buildChallengeRecord({ clientId: clientB, phone: "201000000000", countryCode: "20", deviceId: "synthetic-device-b", dataKey, now: () => now });
+  assert.notEqual(challengeA.challengeId, challengeB.challengeId);
+  assert.equal(challengeA.phoneLookupDigest, challengeB.phoneLookupDigest, "phone lookup is client-scoped by the compound index, not by a global document key");
+  assert.equal(isOwnedActiveChallenge(challengeA, { clientId: clientA, now: new Date(now) }), true);
+  assert.equal(isOwnedActiveChallenge(challengeA, { clientId: clientB, now: new Date(now) }), false);
+  assert.equal(isOwnedActiveChallenge(challengeA, { clientId: clientA, now: new Date(challengeA.expiresAt.getTime() + 1) }), false);
+  assert.equal(verifyChallengeDeviceBinding(challengeA, "synthetic-device-a", dataKey), true);
+  assert.equal(verifyChallengeDeviceBinding(challengeA, "synthetic-device-b", dataKey), false);
+  assert.equal(challengeA.phoneEncrypted.includes("201000000000"), false);
+  assert.equal(new ClientDataCipher(dataKey).decrypt(challengeA.phoneEncrypted), "201000000000");
+  assert.equal(Object.hasOwn(challengeA, "otp"), false);
+  const serialized = new LoginChallenge({ ...challengeA, clientId: new mongoose.Types.ObjectId(clientA) }).toJSON();
+  for (const field of ["phoneEncrypted", "phoneLookupDigest", "deviceBindingDigest"]) assert.equal(serialized[field], undefined);
+  assert.ok(LoginChallenge.schema.indexes().some(([index, options]) => index.expiresAt === 1 && options.expireAfterSeconds === 0));
+  assert.ok(LoginChallenge.schema.indexes().some(([index, options]) => index.clientId === 1 && index.challengeId === 1 && options.unique));
+  assert.ok(User.schema.indexes().some(([index, options]) => index.phone === 1 && options.unique));
+  assert.ok(Transaction.schema.indexes().some(([index, options]) => index.idempotencyKey === 1 && options.unique));
 });
 
 test("Hago HTTP client defaults to the bundle-confirmed 15-second bounded timeout", async () => {

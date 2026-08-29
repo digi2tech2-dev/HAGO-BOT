@@ -6,7 +6,8 @@
   "scripts": {
     "start": "node server.js",
     "test": "node test/hago.test.js",
-    "validate:openapi": "node test/validateOpenapi.js"
+    "validate:openapi": "node test/validateOpenapi.js",
+    "client-admin": "node scripts/clientAdmin.js"
   },
   "dependencies": {
     "axios": "^1.7.2",

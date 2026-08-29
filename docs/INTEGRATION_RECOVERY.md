@@ -6,6 +6,14 @@ The executable adapter now has isolated integration components for UAAS, yMicro,
 
 Before this recovery, UAAS signing and turnover were placeholders that returned `BLOCKED`. The recharge-agent bundle and captured HTTP request shape now support the read-only turnover implementation. Complete web-login evidence now also confirms the SMS TripleDES rule and a synthetic compatibility vector. One authorized controlled account has completed authentication, read-only operations, and one controlled Diamond transfer; no captured identifiers, credentials, cookies, device IDs, or balances are retained here.
 
+## Platform multi-client foundation (Prompt 2)
+
+Client authentication is now a separate platform concern: `Client` and `ClientApiKey` records support independently generated, versioned `hago_live_v1_<keyId>_<secret>` credentials. Only the HMAC-SHA-256 digest of the 256-bit generated secret is persisted; a server-side `CLIENT_API_KEY_PEPPER` stays outside MongoDB. Disabled, revoked, expired, and disabled-parent-client keys fail authentication. The future middleware attaches only safe client/key identifiers.
+
+`LoginChallenge` is a durable, tenant-owned foundation with TTL expiry, encrypted phone material, keyed lookup/device-binding digests, and no stored OTP or raw device ID. No V2 OTP endpoint is exposed in this phase because a Connection resource is intentionally deferred to Prompt 3; no incomplete endpoint claims to send OTP or establish a Hago connection.
+
+Existing `x-internal-api-key`, `User`, Hago session storage, `Transaction`, idempotency, reconciliation, and `/api` routes remain legacy V1 compatibility behavior until Prompt 3. This is not yet full tenant isolation and does not change any Hago protocol behavior.
+
 ## Protocol confidence
 
 | Component | Status | Implemented behavior |
