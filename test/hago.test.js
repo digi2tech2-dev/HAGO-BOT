@@ -2,7 +2,10 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const crypto = require("node:crypto");
+const path = require("node:path");
+const { spawnSync } = require("node:child_process");
 const mongoose = require("mongoose");
+const { MongoClient } = require("mongodb");
 const { EventEmitter } = require("node:events");
 const { isUaasSuccess, parseSetCookies, parseTurnoverWallet, parseTurnoverHistory, parseYmicroUser } = require("../src/integrations/hago/parsers");
 const { buildCookieHeader, sessionFromAuthResponse } = require("../src/integrations/hago/session");
@@ -2043,4 +2046,49 @@ test("Prompt 3 index migration rehearses dry-run, apply, partial state, missing 
     await assert.rejects(() => runPrompt3IndexMigration({ collection: duplicates }), /Duplicate idempotency records/);
     assert.deepEqual((await duplicates.indexes()).map((index) => index.name), ["_id_"], "duplicate preflight changes no index");
   } finally { await mongoose.disconnect(); await server.stop(); }
+});
+
+test("migration CLI dry-run cannot create Mongoose indexes and apply changes only the planned indexes", async () => {
+  const server = await MongoMemoryServer.create({ binary: { version: "8.2.6" } });
+  const client = new MongoClient(server.getUri());
+  await client.connect();
+  const collection = client.db().collection("transactions");
+  const root = path.resolve(__dirname, "..");
+  const executeCli = (args = []) => spawnSync(process.execPath, ["scripts/migratePrompt3Indexes.js", ...args], {
+    cwd: root,
+    env: { ...process.env, MONGO_URI: server.getUri() },
+    encoding: "utf8",
+  });
+  const snapshotIndexes = async () => (await collection.indexes()).sort((left, right) => left.name.localeCompare(right.name));
+  try {
+    await collection.insertMany([
+      { marker: "legacy", agentPhone: "synthetic-agent", idempotencyKey: "legacy-order", targetId: "synthetic-target" },
+      { marker: "v2-a", clientId: new mongoose.Types.ObjectId(), idempotencyKey: "tenant-order", targetId: "synthetic-target" },
+    ]);
+    await collection.createIndex({ idempotencyKey: 1 }, { name: "idempotencyKey_1", unique: true });
+    await collection.createIndex({ agentPhone: 1, createdAt: -1 }, { name: "agentPhone_1_createdAt_-1" });
+    const documentsBefore = await collection.find({}).sort({ marker: 1 }).toArray();
+    const indexesBefore = await snapshotIndexes();
+
+    const dryRun = executeCli();
+    assert.equal(dryRun.status, 0, dryRun.stderr);
+    assert.equal(JSON.parse(dryRun.stdout).dryRun, true);
+    assert.deepEqual(await collection.find({}).sort({ marker: 1 }).toArray(), documentsBefore);
+    assert.deepEqual(await snapshotIndexes(), indexesBefore, "CLI dry-run changes no index definition");
+    for (const name of ["clientId_1", "connectionId_1", "legacy_idempotency_key_unique", "client_idempotency_key_unique"]) assert.equal((await snapshotIndexes()).some((index) => index.name === name), false);
+    assert.equal((await snapshotIndexes()).some((index) => index.name === "idempotencyKey_1"), true);
+
+    const applied = executeCli(["--apply"]);
+    assert.equal(applied.status, 0, applied.stderr);
+    assert.equal(JSON.parse(applied.stdout).migrated, true);
+    const indexesAfterApply = await snapshotIndexes();
+    assert.equal(indexesAfterApply.some((index) => index.name === "idempotencyKey_1"), false);
+    assert.equal(indexesAfterApply.some((index) => index.name === "legacy_idempotency_key_unique"), true);
+    assert.equal(indexesAfterApply.some((index) => index.name === "client_idempotency_key_unique"), true);
+    assert.equal(indexesAfterApply.some((index) => index.name === "agentPhone_1_createdAt_-1"), true);
+    assert.deepEqual(await collection.find({}).sort({ marker: 1 }).toArray(), documentsBefore, "CLI apply never mutates documents");
+    const rerun = executeCli(["--apply"]);
+    assert.equal(rerun.status, 0, rerun.stderr);
+    assert.equal(JSON.parse(rerun.stdout).migrated, false);
+  } finally { await client.close(); await server.stop(); }
 });

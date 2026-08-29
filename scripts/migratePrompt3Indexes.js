@@ -5,13 +5,19 @@
  */
 require("dotenv").config();
 const mongoose = require("mongoose");
-const Transaction = require("../src/models/Transaction");
 const { runPrompt3IndexMigration } = require("../src/services/prompt3IndexMigration");
+
+// Do not import/compile Transaction here. Its schema has normal application
+// indexes, and this operator tool must not let Mongoose create any index in
+// dry-run mode. The production collection name is Mongoose's default plural
+// form for Transaction and is intentionally accessed as a raw collection.
+const TRANSACTION_COLLECTION = "transactions";
 
 async function main() {
   if (!process.env.MONGO_URI) throw new Error("MONGO_URI is required");
-  await mongoose.connect(process.env.MONGO_URI);
-  const result = await runPrompt3IndexMigration({ collection: Transaction.collection, apply: process.argv.includes("--apply") });
+  await mongoose.connect(process.env.MONGO_URI, { autoIndex: false, autoCreate: false });
+  const collection = mongoose.connection.db.collection(TRANSACTION_COLLECTION);
+  const result = await runPrompt3IndexMigration({ collection, apply: process.argv.includes("--apply") });
   console.log(JSON.stringify(result));
 }
 
