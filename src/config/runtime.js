@@ -1,4 +1,5 @@
 const crypto = require("crypto");
+const net = require("net");
 
 function requireNonEmpty(env, name) {
   if (typeof env[name] !== "string" || env[name].trim() === "") throw new Error(`${name} is required`);
@@ -18,6 +19,18 @@ function parsePositiveAmount(value, name) {
   const parsed = Number(value);
   if (!Number.isFinite(parsed) || parsed <= 0) throw new Error(`${name} must be a positive number`);
   return parsed;
+}
+
+function parseHost(value, name = "HOST", fallback = "127.0.0.1") {
+  if (value === undefined) return fallback;
+  if (typeof value !== "string") throw new Error(`${name} must be a valid hostname or IP address`);
+  const host = value.trim();
+  if (host === "") throw new Error(`${name} must be a valid hostname or IP address`);
+  if (net.isIP(host)) return host;
+  if (host.length > 253 || !host.split(".").every((label) => /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?$/.test(label))) {
+    throw new Error(`${name} must be a valid hostname or IP address`);
+  }
+  return host;
 }
 
 function getControlledMutationConfig(env = process.env) {
@@ -54,6 +67,7 @@ function validateRuntimeConfig(env = process.env) {
     internalApiKey,
     sessionEncryptionKey,
     port: parsePositiveInteger(env.PORT, "PORT", 3000),
+    host: parseHost(env.HOST),
     hagoRequestTimeoutMs: parsePositiveInteger(env.HAGO_REQUEST_TIMEOUT_MS, "HAGO_REQUEST_TIMEOUT_MS", 15000),
     ...controlledMutation,
     nobilityEnabled: isNobilityEnabled(env),
@@ -67,4 +81,4 @@ function getLocalReadiness({ env = process.env, mongoose }) {
   return { ready: configValid && mongoReady, configValid, mongoReady };
 }
 
-module.exports = { parsePositiveInteger, parsePositiveAmount, parseSessionEncryptionKey, getControlledMutationConfig, isNobilityEnabled, validateRuntimeConfig, getLocalReadiness };
+module.exports = { parsePositiveInteger, parsePositiveAmount, parseHost, parseSessionEncryptionKey, getControlledMutationConfig, isNobilityEnabled, validateRuntimeConfig, getLocalReadiness };

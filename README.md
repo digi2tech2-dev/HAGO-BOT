@@ -91,6 +91,7 @@ Copy `.env.example` to `.env`; do not commit it.
 | Variable | Purpose |
 | --- | --- |
 | `PORT` | API port; defaults to `3000`. |
+| `HOST` | HTTP bind address; defaults to `127.0.0.1`. Keep the adapter on loopback behind Nginx unless a deliberate deployment design requires another validated hostname/IP. |
 | `MONGO_URI` | Required MongoDB connection string. |
 | `INTERNAL_API_KEY` | Required server-to-server API key. |
 | `HAGO_SESSION_ENCRYPTION_KEY` | Required Base64-encoded 32-byte AES-256-GCM key for persisted cookie material. |

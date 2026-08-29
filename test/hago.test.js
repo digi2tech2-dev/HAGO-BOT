@@ -27,7 +27,7 @@ const { prepareRechargeMutation } = hagoService;
 const { SessionSecretCipher, isEncryptedSessionSecret } = require("../src/integrations/hago/sessionSecrets");
 const { encryptSessionForStorage, decryptStoredSession } = require("../src/integrations/hago/session");
 const { combineUaasCookie, decryptSsession, deriveBrowserSession, encryptRawBase64, parseSsession, serializeAuthPayload } = require("../src/integrations/hago/sessionDerivation");
-const { parseSessionEncryptionKey, validateRuntimeConfig, getControlledMutationConfig, isNobilityEnabled, getLocalReadiness } = require("../src/config/runtime");
+const { parseSessionEncryptionKey, parseHost, validateRuntimeConfig, getControlledMutationConfig, isNobilityEnabled, getLocalReadiness } = require("../src/config/runtime");
 const { requestId } = require("../src/middleware/requestId");
 const createApp = require("../src/app");
 const botController = require("../src/controllers/botController");
@@ -264,6 +264,12 @@ test("new session storage encrypts cookies and transitional plaintext records re
 
 test("runtime configuration accepts a 32-byte base64 key and rejects invalid critical values", () => {
   assert.deepEqual(parseSessionEncryptionKey(validEnv.HAGO_SESSION_ENCRYPTION_KEY), sessionKey);
+  assert.equal(validateRuntimeConfig(validEnv).host, "127.0.0.1");
+  assert.equal(validateRuntimeConfig({ ...validEnv, HOST: " 127.0.0.1 " }).host, "127.0.0.1");
+  assert.equal(parseHost("localhost"), "localhost");
+  assert.equal(parseHost("::1"), "::1");
+  assert.throws(() => validateRuntimeConfig({ ...validEnv, HOST: "   " }), /HOST/);
+  assert.throws(() => validateRuntimeConfig({ ...validEnv, HOST: "invalid host!" }), /HOST/);
   assert.equal(validateRuntimeConfig(validEnv).hagoRequestTimeoutMs, 10000);
   assert.equal(validateRuntimeConfig({ ...validEnv, HAGO_REQUEST_TIMEOUT_MS: undefined }).hagoRequestTimeoutMs, 15000);
   assert.throws(() => parseSessionEncryptionKey(Buffer.alloc(31).toString("base64")), /HAGO_SESSION_ENCRYPTION_KEY/);

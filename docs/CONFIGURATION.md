@@ -5,6 +5,7 @@ Copy `.env.example` to `.env` and replace placeholders outside source control. N
 | Variable | Required | Default | Purpose |
 | --- | --- | --- | --- |
 | `PORT` | No | `3000` | HTTP listening port. |
+| `HOST` | No | `127.0.0.1` | Validated HTTP bind hostname or IP. For the Nginx deployment, keep this at loopback so the Node service is not exposed on all interfaces. |
 | `MONGO_URI` | Yes for API | None | MongoDB connection string. Startup waits for a connection. |
 | `INTERNAL_API_KEY` | Yes for trusted backend | None | Server-to-server key sent as `x-internal-api-key`; never expose it to browser code. |
 | `HAGO_SESSION_ENCRYPTION_KEY` | Yes for API | None | Base64-encoded, exactly 32-byte AES-256-GCM key for `hagouid` and `uaasCookie` at rest. |

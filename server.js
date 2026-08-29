@@ -8,7 +8,7 @@ async function start() {
   const config = validateRuntimeConfig();
   await connectDB(config.mongoUri);
   const app = createApp();
-  const server = app.listen(config.port, () => console.log("API server started"));
+  const server = app.listen(config.port, config.host, () => console.log("API server started"));
   const shutdown = async () => {
     server.close();
     const mongoose = require("mongoose");
