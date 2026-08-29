@@ -9,13 +9,14 @@ function normalizePhone(phone) {
   return PHONE_PATTERN.test(normalized) ? normalized : null;
 }
 
-function buildChallengeRecord({ clientId, phone, countryCode, deviceId, country = null, language = null, dataKey, now = () => Date.now(), challengeId = createChallengeId() } = {}) {
+function buildChallengeRecord({ clientId, phone, countryCode, deviceId, country = null, language = null, dataKey, now = () => Date.now(), challengeId = createChallengeId(), status = "OTP_SENT" } = {}) {
   const normalizedPhone = normalizePhone(phone);
   if (!clientId || !normalizedPhone || !/^\d{1,4}$/.test(String(countryCode || "")) || typeof deviceId !== "string" || deviceId.trim().length < 8 || deviceId.trim().length > 256) throw new Error("Invalid LoginChallenge input");
   const current = Number(now());
   if (!Number.isSafeInteger(current)) throw new Error("Invalid challenge clock");
   const cipher = new ClientDataCipher(dataKey);
-  return { clientId, challengeId, phoneEncrypted: cipher.encrypt(normalizedPhone), phoneLookupDigest: digestProtectedLookup(dataKey, "phone", normalizedPhone), countryCode: String(countryCode), deviceBindingDigest: digestProtectedLookup(dataKey, "device", deviceId), country: country || null, language: language || null, status: "OTP_SENT", expiresAt: new Date(current + CHALLENGE_TTL_MS), verifyAttempts: 0 };
+  if (!['REQUESTING', 'OTP_SENT'].includes(status)) throw new Error("Invalid initial LoginChallenge status");
+  return { clientId, challengeId, phoneEncrypted: cipher.encrypt(normalizedPhone), phoneLookupDigest: digestProtectedLookup(dataKey, "phone", normalizedPhone), countryCode: String(countryCode), deviceBindingDigest: digestProtectedLookup(dataKey, "device", deviceId), country: country || null, language: language || null, status, expiresAt: new Date(current + CHALLENGE_TTL_MS), verifyAttempts: 0 };
 }
 
 function isOwnedActiveChallenge(challenge, { clientId, now = new Date() } = {}) {

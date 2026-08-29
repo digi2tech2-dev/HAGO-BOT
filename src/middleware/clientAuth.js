@@ -12,10 +12,11 @@ function createMongoAuthenticator(env = process.env) {
   });
 }
 
-function createClientAuthMiddleware({ authenticator = createMongoAuthenticator() } = {}) {
+function createClientAuthMiddleware({ authenticator, env = process.env } = {}) {
+  const activeAuthenticator = authenticator || createMongoAuthenticator(env);
   return async (req, res, next) => {
     try {
-      const result = await authenticator.authenticate(req.get("x-client-api-key"));
+      const result = await activeAuthenticator.authenticate(req.get("x-client-api-key"));
       if (!result.ok) return res.status(result.status).json({ status: "ERROR", message: result.status === 403 ? "Client access is disabled." : "Client API authentication is invalid." });
       req.auth = result.auth;
       return next();

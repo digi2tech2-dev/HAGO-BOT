@@ -9,6 +9,10 @@
     { "key": "adapterBaseUrl", "value": "http://localhost:3000" },
     { "key": "baseUrl", "value": "http://localhost:3000/api" },
     { "key": "internalApiKey", "value": "<set-in-your-local-environment>" },
+    { "key": "clientApiKey", "value": "<set-client-api-key-in-your-local-environment>" },
+    { "key": "v2BaseUrl", "value": "http://localhost:3000/api/v2" },
+    { "key": "connectionId", "value": "<set-opaque-connection-id>" },
+    { "key": "challengeId", "value": "<set-opaque-challenge-id>" },
     { "key": "phone", "value": "<set-phone>" },
     { "key": "otp", "value": "<set-otp>" },
     { "key": "countryCode", "value": "<set-numeric-country-code>" },
@@ -300,6 +304,40 @@
             "description": "LIVE-VERIFIED once: one authorized controlled request returned code 1 and the wallet balance decreased by exactly the sent amount. Every new request still requires explicit authorization, both mutation environment flags, an authorized ceiling, and sufficient current Crystal balance. Send exactly once; never retry an UNKNOWN outcome."
           },
           "response": []
+        }
+      ]
+    },
+    {
+      "name": "V2 Tenant Connections (requires MULTI_CLIENT_AUTH_ENABLED=true)",
+      "item": [
+        {
+          "name": "V2 Send OTP Challenge",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }, { "key": "x-client-api-key", "value": "{{clientApiKey}}" }],
+            "body": { "mode": "raw", "raw": "{\n  \"phone\": \"{{phone}}\",\n  \"countryCode\": \"{{countryCode}}\",\n  \"deviceId\": \"{{deviceId}}\"\n}" },
+            "url": "{{v2BaseUrl}}/login-challenges",
+            "description": "Tenant-owned V2 challenge. The response returns only challengeId and expiry; no OTP, phone, device ID, cookie, or session is returned. Running it contacts Hago and requires authorization."
+          }, "response": []
+        },
+        {
+          "name": "V2 Verify OTP Challenge",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }, { "key": "x-client-api-key", "value": "{{clientApiKey}}" }],
+            "body": { "mode": "raw", "raw": "{\n  \"otp\": \"{{otp}}\",\n  \"deviceId\": \"{{deviceId}}\"\n}" },
+            "url": "{{v2BaseUrl}}/login-challenges/{{challengeId}}/verify",
+            "description": "Claims the V2 challenge once and returns only an opaque connectionId. Requires authorization; no Hago session data is returned."
+          }, "response": []
+        },
+        {
+          "name": "V2 Wallet via Connection",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }, { "key": "x-client-api-key", "value": "{{clientApiKey}}" }],
+            "url": "{{v2BaseUrl}}/connections/{{connectionId}}/wallet-balance",
+            "description": "Tenant-scoped read-only wallet. An opaque connectionId is authorized against the caller's Client API Key on every request."
+          }, "response": []
         }
       ]
     },

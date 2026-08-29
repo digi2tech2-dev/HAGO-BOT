@@ -1,8 +1,8 @@
 # API Reference
 
-Base path: `/api`. Every route requires `Content-Type: application/json` and `x-internal-api-key: <INTERNAL_API_KEY>`. Requests without a valid key receive `401`; the key is intended for a trusted website/backend, not an end-user browser.
+Legacy base path: `/api`. Legacy routes require `Content-Type: application/json` and `x-internal-api-key: <INTERNAL_API_KEY>`. Tenant-scoped V2 routes use `/api/v2` with `x-client-api-key`. Both credentials are server-to-server only and never browser credentials.
 
-This is the legacy V1 contract. Prompt 2 adds the internal multi-client authentication foundation but intentionally publishes no incomplete V2 challenge or Connection endpoint. Future V2 routes will use `x-client-api-key`; that header is not interchangeable with `x-internal-api-key`, and a Client API Key cannot authenticate a V1 route.
+This document includes legacy V1 and tenant-scoped V2. V1 uses only `x-internal-api-key`; V2 uses only `x-client-api-key`. The headers are not interchangeable. V2 begins with `POST /api/v2/login-challenges`, verifies `POST /api/v2/login-challenges/{challengeId}/verify`, and then scopes every normal operation to `/api/v2/connections/{connectionId}/...`. `connectionId` is opaque and is authorized against the authenticated client on every request; V2 operations do not accept `agentPhone` as authorization.
 
 The complete machine-readable contract is [OpenAPI 3.0.3](openapi.json). `GET /docs` serves a local Swagger UI and `GET /openapi.json` serves the same contract when Swagger is enabled. They never call Hago; Swagger is enabled by default outside production and requires `SWAGGER_ENABLED=true` in production. `GET /health` and `GET /ready` are the only unauthenticated routes.
 

@@ -2,8 +2,11 @@ const express = require("express");
 const authRoutes = require("./routes/authRoutes");
 const botRoutes = require("./routes/botRoutes");
 const internalAuth = require("./middleware/internalAuth");
+const { createClientAuthMiddleware } = require("./middleware/clientAuth");
+const v2Routes = require("./routes/v2Routes");
 const { requestId } = require("./middleware/requestId");
 const { getLocalReadiness } = require("./config/runtime");
+const { isMultiClientAuthEnabled } = require("./config/runtime");
 const { isSwaggerEnabled } = require("./config/swagger");
 const mongoose = require("mongoose");
 const swaggerUi = require("swagger-ui-express");
@@ -32,6 +35,13 @@ function createApp({ env = process.env } = {}) {
   }
   app.use("/api/auth", internalAuth, authRoutes);
   app.use("/api/bot", internalAuth, botRoutes);
+  // V2 never falls back to legacy internal authentication. It is deliberately
+  // unavailable until its independent client-key configuration is enabled.
+  if (isMultiClientAuthEnabled(env)) {
+    app.use("/api/v2", createClientAuthMiddleware({ env }), v2Routes);
+  } else {
+    app.use("/api/v2", (req, res) => res.status(503).json({ status: "ERROR", code: "MULTI_CLIENT_AUTH_DISABLED", message: "V2 client API is not enabled." }));
+  }
   app.use((error, req, res, next) => {
     if (res.headersSent) return next(error);
     console.error("Unhandled API error", { requestId: req.requestId, error: error?.name || "Error" });

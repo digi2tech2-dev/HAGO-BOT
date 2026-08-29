@@ -9,16 +9,24 @@ const expectedPaths = new Set([
   "/api/bot/wallet-balance", "/api/bot/account-history", "/api/bot/transactions", "/api/bot/transactions/reconcile",
   "/api/bot/auto-recharge/diamond/preview", "/api/bot/auto-recharge/crystal/preview", "/api/bot/auto-recharge/nobility/preview",
   "/api/bot/auto-recharge/diamond", "/api/bot/auto-recharge/crystal", "/api/bot/auto-recharge/nobility",
+  "/api/v2/login-challenges", "/api/v2/login-challenges/{challengeId}/verify",
+  "/api/v2/connections/{connectionId}/session/validate", "/api/v2/connections/{connectionId}/verify-id", "/api/v2/connections/{connectionId}/agent-profile",
+  "/api/v2/connections/{connectionId}/wallet-balance", "/api/v2/connections/{connectionId}/account-history", "/api/v2/connections/{connectionId}/transfer-readiness",
+  "/api/v2/connections/{connectionId}/nobility-readiness", "/api/v2/connections/{connectionId}/nobility-purchase-readiness",
+  "/api/v2/connections/{connectionId}/previews/diamond", "/api/v2/connections/{connectionId}/previews/crystal", "/api/v2/connections/{connectionId}/previews/nobility",
+  "/api/v2/connections/{connectionId}/auto-recharge/diamond", "/api/v2/connections/{connectionId}/auto-recharge/crystal", "/api/v2/connections/{connectionId}/auto-recharge/nobility",
+  "/api/v2/connections/{connectionId}/transactions", "/api/v2/connections/{connectionId}/transactions/reconcile",
 ]);
 
 assert.equal(spec.openapi, "3.0.3");
 assert.deepEqual(new Set(Object.keys(spec.paths)), expectedPaths);
 assert.deepEqual(spec.components?.securitySchemes?.ApiKeyAuth, { type: "apiKey", in: "header", name: "x-internal-api-key" });
+assert.deepEqual(spec.components?.securitySchemes?.ClientApiKeyAuth, { type: "apiKey", in: "header", name: "x-client-api-key" });
 for (const [path, item] of Object.entries(spec.paths)) {
   const operation = item.get || item.post;
   assert.ok(operation, `${path} needs an operation`);
   if (path === "/health" || path === "/ready") assert.deepEqual(operation.security, []);
-  else assert.deepEqual(operation.security, [{ ApiKeyAuth: [] }], `${path} must use ApiKeyAuth`);
+  else assert.deepEqual(operation.security, [{ [path.startsWith("/api/v2/") ? "ClientApiKeyAuth" : "ApiKeyAuth"]: [] }], `${path} must use its API family security`);
 }
 const diamond = spec.paths["/api/bot/auto-recharge/diamond"].post;
 const crystal = spec.paths["/api/bot/auto-recharge/crystal"].post;

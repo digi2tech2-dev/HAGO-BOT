@@ -14,9 +14,34 @@
     { "name": "Transactions" },
     { "name": "Previews" },
     { "name": "Controlled Mutations" },
-    { "name": "Nobility" }
+    { "name": "Nobility" },
+    { "name": "V2 Connections" }
   ],
   "paths": {
+    "/api/v2/login-challenges": {
+      "post": { "tags": ["V2 Connections", "Authentication"], "summary": "Send a tenant-owned OTP challenge", "security": [{ "ClientApiKeyAuth": [] }], "requestBody": { "$ref": "#/components/requestBodies/V2SendOtp" }, "responses": { "202": { "$ref": "#/components/responses/V2Challenge" }, "400": { "$ref": "#/components/responses/Error" }, "401": { "$ref": "#/components/responses/Error" }, "429": { "$ref": "#/components/responses/Error" } } }
+    },
+    "/api/v2/login-challenges/{challengeId}/verify": {
+      "post": { "tags": ["V2 Connections", "Authentication"], "summary": "Claim a challenge once and establish an encrypted Connection", "security": [{ "ClientApiKeyAuth": [] }], "parameters": [{ "$ref": "#/components/parameters/ChallengeId" }], "requestBody": { "$ref": "#/components/requestBodies/V2VerifyOtp" }, "responses": { "200": { "$ref": "#/components/responses/V2Connection" }, "400": { "$ref": "#/components/responses/Error" }, "401": { "$ref": "#/components/responses/Error" }, "409": { "$ref": "#/components/responses/Error" } } }
+    },
+    "/api/v2/connections/{connectionId}/wallet-balance": {
+      "post": { "tags": ["V2 Connections", "Wallet & History"], "summary": "Read wallet through a tenant-owned Connection", "security": [{ "ClientApiKeyAuth": [] }], "parameters": [{ "$ref": "#/components/parameters/ConnectionId" }], "responses": { "200": { "$ref": "#/components/responses/WalletBalance" }, "401": { "$ref": "#/components/responses/Error" }, "404": { "$ref": "#/components/responses/Error" } } }
+    },
+    "/api/v2/connections/{connectionId}/session/validate": { "post": { "tags": ["V2 Connections"], "security": [{ "ClientApiKeyAuth": [] }], "parameters": [{ "$ref": "#/components/parameters/ConnectionId" }], "responses": { "200": { "$ref": "#/components/responses/SessionValidation" }, "404": { "$ref": "#/components/responses/Error" } } } },
+    "/api/v2/connections/{connectionId}/verify-id": { "post": { "tags": ["V2 Connections"], "security": [{ "ClientApiKeyAuth": [] }], "parameters": [{ "$ref": "#/components/parameters/ConnectionId" }], "requestBody": { "$ref": "#/components/requestBodies/V2Target" }, "responses": { "200": { "$ref": "#/components/responses/Success" }, "404": { "$ref": "#/components/responses/Error" } } } },
+    "/api/v2/connections/{connectionId}/agent-profile": { "post": { "tags": ["V2 Connections"], "security": [{ "ClientApiKeyAuth": [] }], "parameters": [{ "$ref": "#/components/parameters/ConnectionId" }], "responses": { "200": { "$ref": "#/components/responses/Success" }, "404": { "$ref": "#/components/responses/Error" } } } },
+    "/api/v2/connections/{connectionId}/account-history": { "post": { "tags": ["V2 Connections"], "security": [{ "ClientApiKeyAuth": [] }], "parameters": [{ "$ref": "#/components/parameters/ConnectionId" }], "requestBody": { "$ref": "#/components/requestBodies/V2History" }, "responses": { "200": { "$ref": "#/components/responses/AccountHistory" }, "404": { "$ref": "#/components/responses/Error" } } } },
+    "/api/v2/connections/{connectionId}/transfer-readiness": { "post": { "tags": ["V2 Connections"], "security": [{ "ClientApiKeyAuth": [] }], "parameters": [{ "$ref": "#/components/parameters/ConnectionId" }], "responses": { "200": { "$ref": "#/components/responses/TransferReadiness" }, "404": { "$ref": "#/components/responses/Error" } } } },
+    "/api/v2/connections/{connectionId}/nobility-readiness": { "post": { "tags": ["V2 Connections", "Nobility"], "security": [{ "ClientApiKeyAuth": [] }], "parameters": [{ "$ref": "#/components/parameters/ConnectionId" }], "requestBody": { "$ref": "#/components/requestBodies/V2Target" }, "responses": { "200": { "$ref": "#/components/responses/Success" }, "404": { "$ref": "#/components/responses/Error" } } } },
+    "/api/v2/connections/{connectionId}/nobility-purchase-readiness": { "post": { "tags": ["V2 Connections", "Nobility"], "security": [{ "ClientApiKeyAuth": [] }], "parameters": [{ "$ref": "#/components/parameters/ConnectionId" }], "requestBody": { "$ref": "#/components/requestBodies/V2Nobility" }, "responses": { "200": { "$ref": "#/components/responses/NobilityPurchaseReadiness" }, "404": { "$ref": "#/components/responses/Error" } } } },
+    "/api/v2/connections/{connectionId}/previews/diamond": { "post": { "tags": ["V2 Connections", "Previews"], "security": [{ "ClientApiKeyAuth": [] }], "parameters": [{ "$ref": "#/components/parameters/ConnectionId" }], "requestBody": { "$ref": "#/components/requestBodies/V2Amount" }, "responses": { "200": { "$ref": "#/components/responses/Preview" } } } },
+    "/api/v2/connections/{connectionId}/previews/crystal": { "post": { "tags": ["V2 Connections", "Previews"], "security": [{ "ClientApiKeyAuth": [] }], "parameters": [{ "$ref": "#/components/parameters/ConnectionId" }], "requestBody": { "$ref": "#/components/requestBodies/V2Amount" }, "responses": { "200": { "$ref": "#/components/responses/Preview" } } } },
+    "/api/v2/connections/{connectionId}/previews/nobility": { "post": { "tags": ["V2 Connections", "Previews", "Nobility"], "security": [{ "ClientApiKeyAuth": [] }], "parameters": [{ "$ref": "#/components/parameters/ConnectionId" }], "requestBody": { "$ref": "#/components/requestBodies/V2Nobility" }, "responses": { "200": { "$ref": "#/components/responses/Preview" } } } },
+    "/api/v2/connections/{connectionId}/auto-recharge/diamond": { "post": { "tags": ["V2 Connections", "Controlled Mutations"], "security": [{ "ClientApiKeyAuth": [] }], "parameters": [{ "$ref": "#/components/parameters/ConnectionId" }, { "$ref": "#/components/parameters/IdempotencyKey" }, { "$ref": "#/components/parameters/ControlledMutation" }], "requestBody": { "$ref": "#/components/requestBodies/V2AmountTarget" }, "responses": { "200": { "$ref": "#/components/responses/Transaction" } } } },
+    "/api/v2/connections/{connectionId}/auto-recharge/crystal": { "post": { "tags": ["V2 Connections", "Controlled Mutations"], "security": [{ "ClientApiKeyAuth": [] }], "parameters": [{ "$ref": "#/components/parameters/ConnectionId" }, { "$ref": "#/components/parameters/IdempotencyKey" }, { "$ref": "#/components/parameters/ControlledMutation" }], "requestBody": { "$ref": "#/components/requestBodies/V2AmountTarget" }, "responses": { "200": { "$ref": "#/components/responses/Transaction" } } } },
+    "/api/v2/connections/{connectionId}/auto-recharge/nobility": { "post": { "tags": ["V2 Connections", "Nobility"], "description": "No price, pack, buy type, or buyer UID is accepted.", "security": [{ "ClientApiKeyAuth": [] }], "parameters": [{ "$ref": "#/components/parameters/ConnectionId" }, { "$ref": "#/components/parameters/IdempotencyKey" }], "requestBody": { "$ref": "#/components/requestBodies/V2Nobility" }, "responses": { "200": { "$ref": "#/components/responses/Transaction" } } } },
+    "/api/v2/connections/{connectionId}/transactions": { "post": { "tags": ["V2 Connections", "Transactions"], "security": [{ "ClientApiKeyAuth": [] }], "parameters": [{ "$ref": "#/components/parameters/ConnectionId" }], "responses": { "200": { "$ref": "#/components/responses/TransactionList" } } } },
+    "/api/v2/connections/{connectionId}/transactions/reconcile": { "post": { "tags": ["V2 Connections", "Transactions"], "security": [{ "ClientApiKeyAuth": [] }], "parameters": [{ "$ref": "#/components/parameters/ConnectionId" }], "requestBody": { "$ref": "#/components/requestBodies/V2Reconcile" }, "responses": { "200": { "$ref": "#/components/responses/Success" }, "404": { "$ref": "#/components/responses/Error" } } } },
     "/health": {
       "get": { "tags": ["Health"], "summary": "Process liveness", "security": [], "responses": { "200": { "$ref": "#/components/responses/Health" } } }
     },
@@ -79,10 +104,12 @@
     }
   },
   "components": {
-    "securitySchemes": { "ApiKeyAuth": { "type": "apiKey", "in": "header", "name": "x-internal-api-key" } },
+    "securitySchemes": { "ApiKeyAuth": { "type": "apiKey", "in": "header", "name": "x-internal-api-key" }, "ClientApiKeyAuth": { "type": "apiKey", "in": "header", "name": "x-client-api-key" } },
     "parameters": {
       "IdempotencyKey": { "name": "Idempotency-Key", "in": "header", "required": true, "schema": { "type": "string", "minLength": 8, "maxLength": 128 }, "description": "Stable trusted-backend financial order key." },
-      "ControlledMutation": { "name": "X-Controlled-Mutation", "in": "header", "required": true, "schema": { "type": "string", "enum": ["true"] }, "description": "Explicit controlled Diamond/Crystal request signal." }
+      "ControlledMutation": { "name": "X-Controlled-Mutation", "in": "header", "required": true, "schema": { "type": "string", "enum": ["true"] }, "description": "Explicit controlled Diamond/Crystal request signal." },
+      "ChallengeId": { "name": "challengeId", "in": "path", "required": true, "schema": { "type": "string", "pattern": "^chl_[A-Za-z0-9_-]{22}$" } },
+      "ConnectionId": { "name": "connectionId", "in": "path", "required": true, "schema": { "type": "string", "pattern": "^con_[A-Za-z0-9_-]{22}$" } }
     },
     "requestBodies": {
       "SendOtp": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/SendOtpRequest" } } } },
@@ -97,7 +124,15 @@
       "CrystalRecharge": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/CrystalRechargeRequest" } } } },
       "NobilityPreview": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/NobilityPreviewRequest" } } } },
       "NobilityRecharge": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/NobilityRechargeRequest" } } } },
-      "Reconcile": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ReconcileRequest" } } } }
+      "Reconcile": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ReconcileRequest" } } } },
+      "V2SendOtp": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/V2SendOtpRequest" } } } },
+      "V2VerifyOtp": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/V2VerifyOtpRequest" } } } },
+      "V2Target": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/V2TargetRequest" } } } },
+      "V2Amount": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/V2AmountRequest" } } } },
+      "V2AmountTarget": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/V2AmountTargetRequest" } } } },
+      "V2Nobility": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/V2NobilityRequest" } } } },
+      "V2History": { "required": false, "content": { "application/json": { "schema": { "type": "object", "additionalProperties": true } } } },
+      "V2Reconcile": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/V2ReconcileRequest" } } } }
     },
     "responses": {
       "Health": { "description": "Process is live", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/HealthResponse" } } } },
@@ -111,7 +146,9 @@
       "Transaction": { "description": "Sanitized local transaction state", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/TransactionResponse" } } } },
       "TransactionList": { "description": "Sanitized transaction list", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/TransactionListResponse" } } } },
       "Preview": { "description": "Local structure metadata only", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/PreviewResponse" } } } },
-      "NobilityPurchaseReadiness": { "description": "Sanitized current Nobility eligibility", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/NobilityPurchaseReadinessResponse" } } } }
+      "NobilityPurchaseReadiness": { "description": "Sanitized current Nobility eligibility", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/NobilityPurchaseReadinessResponse" } } } },
+      "V2Challenge": { "description": "Challenge identifier only; no phone, device, OTP, or Hago state.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/V2ChallengeResponse" } } } },
+      "V2Connection": { "description": "Sanitized opaque tenant-owned connection.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/V2ConnectionResponse" } } } }
     },
     "schemas": {
       "HealthResponse": { "type": "object", "required": ["status"], "properties": { "status": { "type": "string", "enum": ["OK"] } } },
@@ -138,7 +175,16 @@
       "TransactionResponse": { "type": "object", "required": ["status", "transaction"], "properties": { "status": { "type": "string", "enum": ["SUCCESS", "ERROR"] }, "transaction": { "type": "object", "properties": { "id": { "type": "string" }, "serviceType": { "type": "string", "enum": ["DIAMOND", "CRYSTAL", "NOBILITY"] }, "nobilityType": { "type": ["string", "null"] }, "amount": { "type": ["number", "null"] }, "status": { "type": "string", "enum": ["PENDING", "SUCCESS", "FAILED", "UNKNOWN"] }, "upstreamStatus": { "type": "string", "enum": ["NOT_SENT", "SEND_PENDING", "SUCCESS", "FAILED", "UNKNOWN"] }, "upstreamCode": { "type": ["integer", "null"] }, "upstreamTimeout": { "type": "boolean" }, "createdAt": { "type": "string", "format": "date-time" } } } } },
       "TransactionListResponse": { "type": "object", "required": ["status", "transactions"], "properties": { "status": { "type": "string", "enum": ["SUCCESS"] }, "transactions": { "type": "array", "items": { "type": "object" } } } },
       "NobilityPurchaseReadinessResponse": { "type": "object", "required": ["status", "nobilityPurchaseReadiness"], "properties": { "status": { "type": "string", "enum": ["SUCCESS"] }, "nobilityPurchaseReadiness": { "type": "object", "properties": { "selectedType": { "type": "integer", "minimum": 1, "maximum": 4 }, "selectedName": { "type": ["string", "null"] }, "derivedBuyType": { "type": ["integer", "null"], "enum": [1, 2, null] }, "derivedBuyTypeName": { "type": ["string", "null"] }, "diamondCost": { "type": ["number", "null"] }, "packAvailable": { "type": ["boolean", "null"] }, "wallet": { "type": "object", "properties": { "available": { "type": ["number", "null"] }, "sufficient": { "type": ["boolean", "null"] } } }, "lowerTierBlocked": { "type": "boolean" }, "confirmationRequired": { "type": "boolean" }, "technicallyEligible": { "type": "boolean" }, "blockReason": { "type": ["string", "null"] } } } } },
-      "PreviewResponse": { "type": "object", "properties": { "serviceType": { "type": "string" }, "amountType": { "type": "string" }, "currencyType": { "type": ["integer", "null"] }, "currencyTypeType": { "type": "string" }, "useGoldCurrency": { "type": "boolean" }, "multipartFieldNames": { "type": "array", "items": { "type": "string" } }, "dataPropertyNames": { "type": "array", "items": { "type": "string" } } } }
+      "PreviewResponse": { "type": "object", "properties": { "serviceType": { "type": "string" }, "amountType": { "type": "string" }, "currencyType": { "type": ["integer", "null"] }, "currencyTypeType": { "type": "string" }, "useGoldCurrency": { "type": "boolean" }, "multipartFieldNames": { "type": "array", "items": { "type": "string" } }, "dataPropertyNames": { "type": "array", "items": { "type": "string" } } } },
+      "V2SendOtpRequest": { "type": "object", "additionalProperties": false, "required": ["phone", "countryCode", "deviceId"], "properties": { "phone": { "type": "string", "pattern": "^\\+?\\d{8,18}$", "writeOnly": true }, "countryCode": { "type": "string", "pattern": "^\\d{1,4}$" }, "deviceId": { "type": "string", "minLength": 8, "maxLength": 256, "writeOnly": true }, "country": { "type": "string", "pattern": "^[A-Z]{2}$" }, "language": { "type": "string" } } },
+      "V2VerifyOtpRequest": { "type": "object", "additionalProperties": false, "required": ["otp", "deviceId"], "properties": { "otp": { "type": "string", "writeOnly": true }, "deviceId": { "type": "string", "writeOnly": true } } },
+      "V2ChallengeResponse": { "type": "object", "required": ["status", "challengeId", "expiresAt"], "properties": { "status": { "type": "string", "enum": ["OTP_SENT"] }, "challengeId": { "type": "string" }, "expiresAt": { "type": "string", "format": "date-time" } } },
+      "V2ConnectionResponse": { "type": "object", "required": ["status", "connection"], "properties": { "status": { "type": "string", "enum": ["SUCCESS"] }, "connection": { "type": "object", "properties": { "connectionId": { "type": "string" }, "status": { "type": "string" } } } } },
+      "V2TargetRequest": { "type": "object", "additionalProperties": false, "required": ["targetId"], "properties": { "targetId": { "type": "string", "minLength": 1 } } },
+      "V2AmountRequest": { "type": "object", "additionalProperties": false, "required": ["amount"], "properties": { "amount": { "type": "number", "exclusiveMinimum": 0 } } },
+      "V2AmountTargetRequest": { "type": "object", "additionalProperties": false, "required": ["targetId", "amount"], "properties": { "targetId": { "type": "string", "minLength": 1 }, "amount": { "type": "number", "exclusiveMinimum": 0 } } },
+      "V2NobilityRequest": { "type": "object", "additionalProperties": false, "required": ["targetId", "nobilityType"], "properties": { "targetId": { "type": "string", "minLength": 1 }, "nobilityType": { "type": "integer", "minimum": 1, "maximum": 4 } } },
+      "V2ReconcileRequest": { "type": "object", "additionalProperties": false, "required": ["transactionId"], "properties": { "transactionId": { "type": "string" }, "history": { "type": "object" } } }
     }
   }
 }

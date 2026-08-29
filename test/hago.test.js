@@ -41,6 +41,17 @@ const createApp = require("../src/app");
 const botController = require("../src/controllers/botController");
 const User = require("../src/models/User");
 const Transaction = require("../src/models/Transaction");
+const Connection = require("../src/models/Connection");
+const RateLimitBucket = require("../src/models/RateLimitBucket");
+const UpstreamAccountLock = require("../src/models/UpstreamAccountLock");
+const v2Controller = require("../src/controllers/v2Controller");
+const { makeConnectionValues } = require("../src/services/connectionService");
+const { getOwnedConnection } = require("../src/services/connectionService");
+const { acquireUpstreamAccountLock } = require("../src/services/upstreamAccountLock");
+const { releaseUpstreamAccountLock, holdUnknownUpstreamAccount } = require("../src/services/upstreamAccountLock");
+const { consumeRateLimit } = require("../src/services/mongoRateLimit");
+const { MongoMemoryServer } = require("mongodb-memory-server");
+const { run: runClientAdmin } = require("../scripts/clientAdmin");
 
 const uuid = "123e4567-e89b-42d3-a456-426614174000";
 const sessionA = { hagoUid: "42", country: "EG", language: "en", cookies: { hagouid: "a", uaasCookie: "one" } };
@@ -1636,4 +1647,345 @@ test("Swagger contract and UI are local-only and follow the documented exposure 
   } finally {
     global.fetch = originalFetch;
   }
+});
+
+test("V2 tenant primitives keep connection/session material private and client-scoped", () => {
+  const dataKey = Buffer.alloc(32, 19);
+  const priorSessionKey = process.env.HAGO_SESSION_ENCRYPTION_KEY;
+  process.env.HAGO_SESSION_ENCRYPTION_KEY = sessionKey.toString("base64");
+  const values = makeConnectionValues({
+    clientId: new mongoose.Types.ObjectId(), phone: "+201234567890", countryCode: "20", deviceId: "synthetic-device-id", dataKey,
+    session: { cookies: { hagouid: "synthetic-hago-uid", uaasCookie: "synthetic-cookie" } },
+  });
+  if (priorSessionKey === undefined) delete process.env.HAGO_SESSION_ENCRYPTION_KEY; else process.env.HAGO_SESSION_ENCRYPTION_KEY = priorSessionKey;
+  const connection = new Connection(values);
+  const serialized = connection.toJSON();
+  assert.match(connection.connectionId, /^con_[A-Za-z0-9_-]{22}$/);
+  assert.equal(serialized.phoneEncrypted, undefined);
+  assert.equal(serialized.phoneLookupDigest, undefined);
+  assert.equal(serialized.upstreamAccountDigest, undefined);
+  assert.equal(serialized.hagoSession, undefined);
+  assert.equal(Connection.schema.indexes().some(([index]) => index.clientId === 1 && index.connectionId === 1), true);
+  assert.equal(RateLimitBucket.schema.indexes().some(([index]) => index.scope === 1 && index.keyDigest === 1), true);
+  assert.equal(UpstreamAccountLock.schema.indexes().some(([index]) => index.upstreamAccountDigest === 1), true);
+});
+
+test("V2 outcomes preserve service-specific semantics and never turn unknown Nobility codes into failures", () => {
+  assert.equal(v2Controller._test.outcomeFromTransfer({ outcome: "SUCCESS" }).state, "SUCCESS");
+  assert.equal(v2Controller._test.outcomeFromTransfer({ outcome: "REJECTED" }).state, "FAILED");
+  assert.equal(v2Controller._test.outcomeFromTransfer({ timeout: true }).state, "UNKNOWN");
+  assert.equal(v2Controller._test.outcomeFromNobility({ is_ok: true }).state, "SUCCESS");
+  assert.equal(v2Controller._test.outcomeFromNobility({ upstreamCode: 30201 }).state, "FAILED");
+  assert.equal(v2Controller._test.outcomeFromNobility({ upstreamCode: 99999 }).state, "UNKNOWN");
+  assert.equal(v2Controller._test.outcomeFromNobility({ timeout: true }).state, "UNKNOWN");
+});
+
+test("V2 routes enforce separate client auth and connection-scoped ownership in source", () => {
+  const appSource = fs.readFileSync("src/app.js", "utf8");
+  const routes = fs.readFileSync("src/routes/v2Routes.js", "utf8");
+  const controller = fs.readFileSync("src/controllers/v2Controller.js", "utf8");
+  assert.match(appSource, /app\.use\("\/api\/v2", createClientAuthMiddleware/);
+  assert.match(routes, /requireOwnedConnection/);
+  assert.match(controller, /clientId: req\.auth\.clientId/);
+  assert.match(fs.readFileSync("src/services/upstreamAccountLock.js", "utf8"), /UNKNOWN_HOLD/);
+  assert.doesNotMatch(controller, /BuyNobleByAgency/);
+  assert.equal(v2Controller._test.normalizedIdempotency("order_12345"), "order_12345");
+  assert.equal(v2Controller._test.normalizedIdempotency("bad"), null);
+});
+
+test("tenant connection lookup always joins opaque connectionId with authenticated clientId", async () => {
+  const original = Connection.findOne;
+  const clientId = new mongoose.Types.ObjectId();
+  let filter;
+  Connection.findOne = (value) => { filter = value; return { select: () => ({ marker: "owned" }) }; };
+  try {
+    const found = await getOwnedConnection({ clientId, connectionId: "con_1234567890123456789012", includeSession: true });
+    assert.equal(found.marker, "owned");
+    assert.equal(String(filter.clientId), String(clientId));
+    assert.equal(filter.connectionId, "con_1234567890123456789012");
+    assert.equal(await getOwnedConnection({ clientId, connectionId: "con_invalid", includeSession: true }), null);
+  } finally { Connection.findOne = original; }
+});
+
+test("upstream account lock rejects a separate tenant while held or held unknown", async () => {
+  const originalFindOne = UpstreamAccountLock.findOne;
+  const digest = "a".repeat(64);
+  const ownerA = new mongoose.Types.ObjectId();
+  const ownerB = new mongoose.Types.ObjectId();
+  UpstreamAccountLock.findOne = async () => ({ state: "UNKNOWN_HOLD", ownerTransactionId: ownerA });
+  try {
+    const unknown = await acquireUpstreamAccountLock({ upstreamAccountDigest: digest, ownerTransactionId: ownerB, clientId: new mongoose.Types.ObjectId(), connectionId: "con_1234567890123456789012" });
+    assert.deepEqual(unknown, { ok: false, kind: "UNKNOWN_HOLD" });
+    UpstreamAccountLock.findOne = async () => ({ state: "HELD", ownerTransactionId: ownerA, leaseExpiresAt: new Date(Date.now() + 60_000) });
+    const held = await acquireUpstreamAccountLock({ upstreamAccountDigest: digest, ownerTransactionId: ownerB, clientId: new mongoose.Types.ObjectId(), connectionId: "con_1234567890123456789012" });
+    assert.deepEqual(held, { ok: false, kind: "LOCKED" });
+  } finally { UpstreamAccountLock.findOne = originalFindOne; }
+});
+
+test("Client A cannot access Client B connection and guessed connections use the same safe result", async () => {
+  const original = Connection.findOne;
+  const clientA = new mongoose.Types.ObjectId(); const clientB = new mongoose.Types.ObjectId();
+  const connectionB = "con_1234567890123456789012";
+  Connection.findOne = ({ clientId, connectionId }) => ({ select: () => Promise.resolve(String(clientId) === String(clientB) && connectionId === connectionB ? { connectionId } : null) });
+  try {
+    assert.equal(await getOwnedConnection({ clientId: clientA, connectionId: connectionB, includeSession: true }), null);
+    assert.equal(await getOwnedConnection({ clientId: clientA, connectionId: "con_abcdefghijklmnopqrstuv", includeSession: true }), null);
+  } finally { Connection.findOne = original; }
+});
+
+test("Client A cannot claim Client B challenge and foreign or guessed IDs are indistinguishable", async () => {
+  const original = LoginChallenge.findOne; const originalRate = RateLimitBucket.findOneAndUpdate;
+  const clientA = new mongoose.Types.ObjectId(); let queried;
+  LoginChallenge.findOne = (filter) => { queried = filter; return { select: () => Promise.resolve(null) }; };
+  RateLimitBucket.findOneAndUpdate = async () => ({ count: 1 });
+  const prior = { MONGO_URI: process.env.MONGO_URI, INTERNAL_API_KEY: process.env.INTERNAL_API_KEY, HAGO_SESSION_ENCRYPTION_KEY: process.env.HAGO_SESSION_ENCRYPTION_KEY, CLIENT_DATA_ENCRYPTION_KEY: process.env.CLIENT_DATA_ENCRYPTION_KEY, CLIENT_API_KEY_PEPPER: process.env.CLIENT_API_KEY_PEPPER, MULTI_CLIENT_AUTH_ENABLED: process.env.MULTI_CLIENT_AUTH_ENABLED };
+  Object.assign(process.env, { ...validEnv, MULTI_CLIENT_AUTH_ENABLED: "true", CLIENT_DATA_ENCRYPTION_KEY: Buffer.alloc(32, 3).toString("base64"), CLIENT_API_KEY_PEPPER: Buffer.alloc(32, 4).toString("base64") });
+  const makeResponse = () => { const state = {}; return { status(code) { state.code = code; return this; }, json(body) { state.body = body; return state; }, state }; };
+  try {
+    for (const challengeId of ["chl_1234567890123456789012", "chl_abcdefghijklmnopqrstuv"]) {
+      const res = makeResponse();
+      await v2Controller.verifyOtp({ params: { challengeId }, body: { otp: "1234", deviceId: "synthetic-device-id" }, auth: { clientId: clientA }, get: () => undefined }, res, assert.fail);
+      assert.equal(res.state.code, 409); assert.equal(res.state.body.code, "CHALLENGE_UNAVAILABLE"); assert.equal(String(queried.clientId), String(clientA));
+    }
+  } finally {
+    LoginChallenge.findOne = original; RateLimitBucket.findOneAndUpdate = originalRate;
+    for (const [key, value] of Object.entries(prior)) { if (value === undefined) delete process.env[key]; else process.env[key] = value; }
+  }
+});
+
+test("Client A cannot read or reconcile Client B transaction and caller clientId is ignored", async () => {
+  const original = Transaction.findOne;
+  const clientA = new mongoose.Types.ObjectId(); let query;
+  Transaction.findOne = (filter) => { query = filter; return Promise.resolve(null); };
+  const state = {}; const res = { status(code) { state.code = code; return this; }, json(body) { state.body = body; return state; } };
+  try {
+    await v2Controller.reconcile({ auth: { clientId: clientA }, connection: { connectionId: "con_1234567890123456789012" }, body: { transactionId: "0123456789abcdef01234567", clientId: String(new mongoose.Types.ObjectId()) } }, res, assert.fail);
+    assert.equal(state.code, 404); assert.equal(state.body.code, "TRANSACTION_NOT_FOUND"); assert.equal(String(query.clientId), String(clientA)); assert.equal(query.connectionId, "con_1234567890123456789012");
+  } finally { Transaction.findOne = original; }
+});
+
+test("V2 challenge claim has tenant, expiry, device, consumption, and atomic attempt-limit predicates", () => {
+  const source = fs.readFileSync("src/controllers/v2Controller.js", "utf8");
+  assert.match(source, /clientId: req\.auth\.clientId, challengeId, status: "OTP_SENT", expiresAt: \{ \$gt: new Date\(\) \}/);
+  assert.match(source, /verifyChallengeDeviceBinding\(candidate, deviceId, dataKey\)/);
+  assert.match(source, /verifyAttempts: \{ \$lt: 10 \}/);
+  assert.match(source, /status: "CONSUMED"/);
+  assert.match(source, /status: "FAILED"/);
+});
+
+test("V2 transaction schema scopes idempotency per client while retaining isolated legacy V1 uniqueness", () => {
+  const indexes = Transaction.schema.indexes();
+  const tenant = indexes.find(([key, options]) => key.clientId === 1 && key.idempotencyKey === 1 && options.name !== "legacy_idempotency_key_unique");
+  const legacy = indexes.find(([key, options]) => key.clientId === 1 && key.idempotencyKey === 1 && options.name === "legacy_idempotency_key_unique");
+  assert.deepEqual(tenant[1].partialFilterExpression, { clientId: { $exists: true }, idempotencyKey: { $exists: true } });
+  assert.deepEqual(legacy[1].partialFilterExpression, { clientId: null, idempotencyKey: { $exists: true } });
+});
+
+test("financial lock atomic predicate only allows owner or expired HELD locks and never UNKNOWN_HOLD", async () => {
+  const originalExisting = UpstreamAccountLock.findOne; const originalUpdate = UpstreamAccountLock.findOneAndUpdate;
+  const owner = new mongoose.Types.ObjectId(); let filter;
+  UpstreamAccountLock.findOne = async () => null;
+  UpstreamAccountLock.findOneAndUpdate = async (value) => { filter = value; return { state: "HELD", ownerTransactionId: owner }; };
+  try {
+    const result = await acquireUpstreamAccountLock({ upstreamAccountDigest: "b".repeat(64), ownerTransactionId: owner, clientId: new mongoose.Types.ObjectId(), connectionId: "con_1234567890123456789012" });
+    assert.equal(result.ok, true);
+    assert.equal(filter.$or.some((part) => part.state === "UNKNOWN_HOLD"), false);
+    assert.equal(filter.$or.some((part) => part.leaseExpiresAt?.$lte instanceof Date), true);
+  } finally { UpstreamAccountLock.findOne = originalExisting; UpstreamAccountLock.findOneAndUpdate = originalUpdate; }
+});
+
+test("real Mongo permits same V2 idempotency key across clients and isolates Mongo rate-limit buckets", async () => {
+  const server = await MongoMemoryServer.create({ binary: { version: "8.2.6" } });
+  await mongoose.connect(server.getUri());
+  try {
+    await Promise.all([Transaction.syncIndexes(), RateLimitBucket.syncIndexes()]);
+    await Promise.all([Transaction.deleteMany({}), RateLimitBucket.deleteMany({})]);
+    const clientA = new mongoose.Types.ObjectId(); const clientB = new mongoose.Types.ObjectId();
+    const base = { targetId: "synthetic-target", serviceType: "DIAMOND", amount: 1, status: "PENDING", upstreamStatus: "NOT_SENT", intentFingerprint: "a".repeat(64), idempotencyKey: "order_same_123" };
+    const transactionA = await Transaction.create({ ...base, clientId: clientA, connectionId: "con_1234567890123456789012" });
+    const transactionB = await Transaction.create({ ...base, clientId: clientB, connectionId: "con_abcdefghijklmnopqrstuv" });
+    assert.notEqual(String(transactionA._id), String(transactionB._id));
+    await assert.rejects(() => Transaction.create({ ...base, clientId: clientA, connectionId: "con_1234567890123456789012", targetId: "conflicting-synthetic-target" }), { code: 11000 });
+
+    const key = Buffer.alloc(32, 22);
+    for (let count = 0; count < 5; count += 1) assert.equal((await consumeRateLimit({ scope: "v2-otp-send", subject: `${clientA}:same-phone`, dataKey: key, limit: 5, windowMs: 60_000 })).allowed, true);
+    assert.equal((await consumeRateLimit({ scope: "v2-otp-send", subject: `${clientA}:same-phone`, dataKey: key, limit: 5, windowMs: 60_000 })).allowed, false);
+    assert.equal((await consumeRateLimit({ scope: "v2-otp-send", subject: `${clientB}:same-phone`, dataKey: key, limit: 5, windowMs: 60_000 })).allowed, true);
+    assert.equal((await consumeRateLimit({ scope: "v2-otp-verify", subject: `${clientA}:same-challenge`, dataKey: key, limit: 1, windowMs: 60_000 })).allowed, true);
+    assert.equal((await consumeRateLimit({ scope: "v2-otp-verify", subject: `${clientA}:same-challenge`, dataKey: key, limit: 1, windowMs: 60_000 })).allowed, false);
+    assert.equal((await consumeRateLimit({ scope: "v2-otp-verify", subject: `${clientB}:same-challenge`, dataKey: key, limit: 1, windowMs: 60_000 })).allowed, true);
+  } finally { await mongoose.disconnect(); await server.stop(); }
+});
+
+test("mocked V2 OTP lifecycle consumes only owned challenges and never leaks protected fields", async () => {
+  const server = await MongoMemoryServer.create({ binary: { version: "8.2.6" } });
+  const priorEnv = { ...process.env };
+  const originalSend = hagoService.sendOtpApi; const originalVerify = hagoService.verifySmsAuthApi;
+  await mongoose.connect(server.getUri());
+  const response = () => { const state = {}; return { status(code) { state.code = code; return this; }, json(body) { state.body = body; return state; }, state }; };
+  const forbidden = new Set(["phone", "phoneEncrypted", "phoneLookupDigest", "otp", "deviceId", "deviceBindingDigest", "hagouid", "hOpenId", "uaasCookie", "cookies", "hagoSession", "upstreamAccountDigest", "secretDigest", "apiKey", "clientApiKey"]);
+  const assertSanitized = (value) => { if (!value || typeof value !== "object") return; for (const [key, child] of Object.entries(value)) { assert.equal(forbidden.has(key), false, `forbidden response key ${key}`); assertSanitized(child); } };
+  try {
+    Object.assign(process.env, { ...validEnv, MULTI_CLIENT_AUTH_ENABLED: "true", CLIENT_DATA_ENCRYPTION_KEY: Buffer.alloc(32, 31).toString("base64"), CLIENT_API_KEY_PEPPER: Buffer.alloc(32, 30).toString("base64") });
+    await Promise.all([LoginChallenge.syncIndexes(), Connection.syncIndexes(), RateLimitBucket.syncIndexes()]);
+    await Promise.all([LoginChallenge.deleteMany({}), Connection.deleteMany({}), RateLimitBucket.deleteMany({})]);
+    const clientA = new mongoose.Types.ObjectId(); const clientB = new mongoose.Types.ObjectId(); const dataKey = Buffer.from(process.env.CLIENT_DATA_ENCRYPTION_KEY, "base64");
+    hagoService.sendOtpApi = async () => ({ ok: false, kind: "BUSINESS_ERROR", message: "synthetic" });
+    const sendRes = response();
+    await v2Controller.sendOtp({ auth: { clientId: clientA }, body: { phone: "+201234567890", countryCode: "20", deviceId: "synthetic-device-id" } }, sendRes, assert.fail);
+    assert.notEqual(sendRes.state.body.status, "OTP_SENT");
+    assert.equal((await LoginChallenge.findOne({ clientId: clientA })).status, "FAILED");
+    hagoService.sendOtpApi = async () => { throw new Error("synthetic transport failure"); };
+    const transportRes = response();
+    await v2Controller.sendOtp({ auth: { clientId: clientA }, body: { phone: "+201234567893", countryCode: "20", deviceId: "synthetic-device-id" } }, transportRes, (error) => { transportRes.state.error = error; });
+    assert.ok(transportRes.state.error instanceof Error);
+    assert.equal((await LoginChallenge.findOne({ clientId: clientA }).sort({ createdAt: -1 })).status, "FAILED");
+
+    const owned = await LoginChallenge.create(buildChallengeRecord({ clientId: clientA, phone: "+201234567890", countryCode: "20", deviceId: "synthetic-device-id", dataKey }));
+    let verifyCalls = 0;
+    hagoService.verifySmsAuthApi = async () => { verifyCalls += 1; return { ok: true, session: { cookies: { hagouid: "synthetic-uid", uaasCookie: "synthetic-cookie" } } }; };
+    const verifyRes = response();
+    await v2Controller.verifyOtp({ auth: { clientId: clientA }, params: { challengeId: owned.challengeId }, body: { otp: "1234", deviceId: "synthetic-device-id" }, get: () => undefined }, verifyRes, assert.fail);
+    assert.equal(verifyRes.state.body.status, "SUCCESS"); assertSanitized(verifyRes.state.body); assert.equal(verifyCalls, 1);
+    assert.equal((await LoginChallenge.findById(owned._id)).status, "CONSUMED"); assert.equal(await Connection.countDocuments({ clientId: clientA }), 1);
+
+    for (const [status, device, clientId] of [["OTP_SENT", "wrong-device-id", clientA], ["OTP_SENT", "synthetic-device-id", clientA], ["CONSUMED", "synthetic-device-id", clientA]]) {
+      const item = await LoginChallenge.create(buildChallengeRecord({ clientId: clientB, phone: "+201234567891", countryCode: "20", deviceId: "synthetic-device-id", dataKey }));
+      if (status === "OTP_SENT" && device === "synthetic-device-id") item.expiresAt = new Date(Date.now() - 1);
+      if (status === "CONSUMED") item.status = "CONSUMED";
+      await item.save();
+      const before = verifyCalls; const rejected = response();
+      await v2Controller.verifyOtp({ auth: { clientId }, params: { challengeId: item.challengeId }, body: { otp: "1234", deviceId: device }, get: () => undefined }, rejected, assert.fail);
+      assert.ok([409, 429].includes(rejected.state.code)); assert.equal(verifyCalls, before);
+    }
+    const limited = await LoginChallenge.create({ ...buildChallengeRecord({ clientId: clientA, phone: "+201234567892", countryCode: "20", deviceId: "synthetic-device-id", dataKey }), verifyAttempts: 10 });
+    const before = verifyCalls; const limitedRes = response();
+    await v2Controller.verifyOtp({ auth: { clientId: clientA }, params: { challengeId: limited.challengeId }, body: { otp: "1234", deviceId: "synthetic-device-id" }, get: () => undefined }, limitedRes, assert.fail);
+    assert.equal(limitedRes.state.code, 409); assert.equal(verifyCalls, before);
+  } finally { hagoService.sendOtpApi = originalSend; hagoService.verifySmsAuthApi = originalVerify; await mongoose.disconnect(); await server.stop(); process.env = priorEnv; }
+});
+
+test("real Mongo financial locks release known outcomes and retain UNKNOWN_HOLD across tenants without retry", async () => {
+  const server = await MongoMemoryServer.create({ binary: { version: "8.2.6" } });
+  await mongoose.connect(server.getUri());
+  try {
+    await UpstreamAccountLock.syncIndexes(); await UpstreamAccountLock.deleteMany({});
+    const ownerA = new mongoose.Types.ObjectId(); const ownerB = new mongoose.Types.ObjectId(); const clientA = new mongoose.Types.ObjectId(); const clientB = new mongoose.Types.ObjectId();
+    const same = "c".repeat(64); const other = "d".repeat(64);
+    assert.equal((await acquireUpstreamAccountLock({ upstreamAccountDigest: same, ownerTransactionId: ownerA, clientId: clientA, connectionId: "con_1234567890123456789012" })).ok, true);
+    assert.deepEqual(await acquireUpstreamAccountLock({ upstreamAccountDigest: same, ownerTransactionId: ownerB, clientId: clientB, connectionId: "con_abcdefghijklmnopqrstuv" }), { ok: false, kind: "LOCKED" });
+    await releaseUpstreamAccountLock({ upstreamAccountDigest: same, ownerTransactionId: ownerA });
+    assert.equal(await UpstreamAccountLock.countDocuments({ upstreamAccountDigest: same }), 0);
+    assert.equal((await acquireUpstreamAccountLock({ upstreamAccountDigest: same, ownerTransactionId: ownerB, clientId: clientB, connectionId: "con_abcdefghijklmnopqrstuv" })).ok, true);
+    await holdUnknownUpstreamAccount({ upstreamAccountDigest: same, ownerTransactionId: ownerB, clientId: clientB, connectionId: "con_abcdefghijklmnopqrstuv" });
+    assert.equal((await UpstreamAccountLock.findOne({ upstreamAccountDigest: same })).state, "UNKNOWN_HOLD");
+    assert.deepEqual(await acquireUpstreamAccountLock({ upstreamAccountDigest: same, ownerTransactionId: ownerA, clientId: clientA, connectionId: "con_1234567890123456789012" }), { ok: false, kind: "UNKNOWN_HOLD" });
+    assert.equal((await acquireUpstreamAccountLock({ upstreamAccountDigest: other, ownerTransactionId: ownerA, clientId: clientA, connectionId: "con_1234567890123456789012" })).ok, true);
+  } finally { await mongoose.disconnect(); await server.stop(); }
+});
+
+test("mocked V2 financial orchestration sends once, releases deterministic outcomes, and holds ambiguous outcomes", async () => {
+  const server = await MongoMemoryServer.create({ binary: { version: "8.2.6" } });
+  const priorEnv = { ...process.env };
+  const originalPrepareGate = hagoService.prepareRechargeMutation;
+  const originalPrepare = hagoService.prepareControlledRecharge;
+  const originalSend = hagoService.sendControlledRecharge;
+  await mongoose.connect(server.getUri());
+  const response = () => { const state = {}; return { status(code) { state.code = code; return this; }, json(body) { state.body = body; return state; }, state }; };
+  const clientA = new mongoose.Types.ObjectId(); const clientB = new mongoose.Types.ObjectId();
+  const sameConnection = { connectionId: "con_1234567890123456789012", upstreamAccountDigest: "e".repeat(64) };
+  const otherConnection = { connectionId: "con_abcdefghijklmnopqrstuv", upstreamAccountDigest: "f".repeat(64) };
+  const request = ({ clientId, connection, key, targetId = "synthetic-target" }) => ({
+    auth: { clientId }, connection, body: { targetId, amount: "1", clientId: String(clientB) },
+    get(name) { return name === "Idempotency-Key" ? key : name === "X-Controlled-Mutation" ? "true" : undefined; },
+  });
+  try {
+    Object.assign(process.env, { ...validEnv, HAGO_MUTATIONS_ENABLED: "true", HAGO_CONTROLLED_MUTATION_MODE: "true", HAGO_CONTROLLED_MUTATION_MAX_AMOUNT: "5" });
+    await Promise.all([Transaction.syncIndexes(), UpstreamAccountLock.syncIndexes()]);
+    await Promise.all([Transaction.deleteMany({}), UpstreamAccountLock.deleteMany({})]);
+    hagoService.prepareRechargeMutation = async () => ({ ok: true, maxAmount: 5 });
+    hagoService.prepareControlledRecharge = async () => ({ ok: true, request: { synthetic: true } });
+    let sends = 0;
+    hagoService.sendControlledRecharge = async () => { sends += 1; return { outcome: "SUCCESS", upstreamCode: 1 }; };
+    const successful = response();
+    await v2Controller.rechargeDiamond(request({ clientId: clientA, connection: sameConnection, key: "financial-success-001" }), successful, assert.fail);
+    assert.equal(successful.state.code, 200); assert.equal(sends, 1);
+    assert.equal((await Transaction.findOne({ idempotencyKey: "financial-success-001" })).status, "SUCCESS");
+    assert.equal(await UpstreamAccountLock.countDocuments({ upstreamAccountDigest: sameConnection.upstreamAccountDigest }), 0);
+    const conflicting = response();
+    await v2Controller.rechargeDiamond(request({ clientId: clientA, connection: sameConnection, key: "financial-success-001", targetId: "different-synthetic-target" }), conflicting, assert.fail);
+    assert.equal(conflicting.state.code, 409); assert.equal(conflicting.state.body.code, "IDEMPOTENCY_CONFLICT"); assert.equal(sends, 1, "a conflicting replay never sends");
+
+    hagoService.sendControlledRecharge = async () => { sends += 1; return { outcome: "REJECTED", upstreamCode: -76 }; };
+    const rejected = response();
+    await v2Controller.rechargeDiamond(request({ clientId: clientA, connection: sameConnection, key: "financial-failed-001" }), rejected, assert.fail);
+    assert.equal(rejected.state.code, 409); assert.equal(sends, 2);
+    assert.equal((await Transaction.findOne({ idempotencyKey: "financial-failed-001" })).status, "FAILED");
+    assert.equal(await UpstreamAccountLock.countDocuments({ upstreamAccountDigest: sameConnection.upstreamAccountDigest }), 0);
+
+    hagoService.prepareControlledRecharge = async () => ({ ok: false, kind: "INSUFFICIENT_BALANCE" });
+    const localFailure = response();
+    await v2Controller.rechargeDiamond(request({ clientId: clientA, connection: sameConnection, key: "financial-local-001" }), localFailure, assert.fail);
+    assert.equal(localFailure.state.code, 400); assert.equal(sends, 2, "a local pre-send failure never calls the sender");
+    assert.equal(await UpstreamAccountLock.countDocuments({ upstreamAccountDigest: sameConnection.upstreamAccountDigest }), 0, "no pre-send lock remains");
+
+    hagoService.prepareControlledRecharge = async () => ({ ok: true, request: { synthetic: true } });
+    hagoService.sendControlledRecharge = async () => { sends += 1; return { outcome: "UNKNOWN", timeout: true }; };
+    const uncertain = response();
+    await v2Controller.rechargeDiamond(request({ clientId: clientA, connection: sameConnection, key: "financial-unknown-001" }), uncertain, assert.fail);
+    assert.equal(uncertain.state.code, 504); assert.equal(sends, 3, "ambiguous mutation is sent exactly once");
+    assert.equal((await UpstreamAccountLock.findOne({ upstreamAccountDigest: sameConnection.upstreamAccountDigest })).state, "UNKNOWN_HOLD");
+
+    const blocked = response();
+    await v2Controller.rechargeDiamond(request({ clientId: clientB, connection: sameConnection, key: "financial-blocked-001" }), blocked, assert.fail);
+    assert.equal(blocked.state.code, 409); assert.equal(blocked.state.body.code, "UNKNOWN_HOLD"); assert.equal(sends, 3, "UNKNOWN_HOLD never retries or sends again");
+
+    hagoService.sendControlledRecharge = async () => { sends += 1; return { outcome: "SUCCESS", upstreamCode: 1 }; };
+    const unrelated = response();
+    await v2Controller.rechargeDiamond(request({ clientId: clientB, connection: otherConnection, key: "financial-other-001" }), unrelated, assert.fail);
+    assert.equal(unrelated.state.code, 200); assert.equal(sends, 4, "a distinct upstream account is not blocked");
+  } finally {
+    hagoService.prepareRechargeMutation = originalPrepareGate; hagoService.prepareControlledRecharge = originalPrepare; hagoService.sendControlledRecharge = originalSend;
+    await mongoose.disconnect(); await server.stop(); process.env = priorEnv;
+  }
+});
+
+test("real Mongo V2 transaction controllers isolate tenant records and hide legacy records", async () => {
+  const server = await MongoMemoryServer.create({ binary: { version: "8.2.6" } });
+  const originalReconcile = hagoService.reconcileMutationReadOnly;
+  await mongoose.connect(server.getUri());
+  const response = () => { const state = {}; return { status(code) { state.code = code; return this; }, json(body) { state.body = body; return state; }, state }; };
+  try {
+    await Transaction.syncIndexes(); await Transaction.deleteMany({});
+    const clientA = new mongoose.Types.ObjectId(); const clientB = new mongoose.Types.ObjectId();
+    const connectionA = "con_1234567890123456789012"; const connectionB = "con_abcdefghijklmnopqrstuv";
+    const base = { targetId: "synthetic-target", serviceType: "DIAMOND", amount: 1, status: "SUCCESS", upstreamStatus: "SUCCESS", intentFingerprint: "f".repeat(64) };
+    const own = await Transaction.create({ ...base, clientId: clientA, connectionId: connectionA, idempotencyKey: "transaction-own-001" });
+    const foreign = await Transaction.create({ ...base, clientId: clientB, connectionId: connectionB, idempotencyKey: "transaction-foreign-001" });
+    await Transaction.create({ ...base, agentPhone: "+200000000000", idempotencyKey: "transaction-legacy-001" });
+    const list = response();
+    await v2Controller.transactions({ auth: { clientId: clientA }, connection: { connectionId: connectionA }, body: { clientId: String(clientB) } }, list, assert.fail);
+    assert.equal(list.state.body.transactions.length, 1); assert.equal(list.state.body.transactions[0].id, String(own._id));
+    hagoService.reconcileMutationReadOnly = async () => ({ ok: true, history: { safe: true } });
+    const foreignResult = response();
+    await v2Controller.reconcile({ auth: { clientId: clientA }, connection: { connectionId: connectionA }, body: { transactionId: String(foreign._id), clientId: String(clientB) } }, foreignResult, assert.fail);
+    assert.equal(foreignResult.state.code, 404); assert.equal(foreignResult.state.body.code, "TRANSACTION_NOT_FOUND");
+    const ownResult = response();
+    await v2Controller.reconcile({ auth: { clientId: clientA }, connection: { connectionId: connectionA }, body: { transactionId: String(own._id), clientId: String(clientB) } }, ownResult, assert.fail);
+    assert.equal(ownResult.state.body.status, "SUCCESS");
+  } finally { hagoService.reconcileMutationReadOnly = originalReconcile; await mongoose.disconnect(); await server.stop(); }
+});
+
+test("operator UNKNOWN_HOLD release requires confirmation and matches only the owner transaction", async () => {
+  const originalDelete = UpstreamAccountLock.deleteOne;
+  const originalLog = console.log;
+  const transactionId = new mongoose.Types.ObjectId().toString();
+  let filter;
+  UpstreamAccountLock.deleteOne = async (value) => { filter = value; return { deletedCount: 1 }; };
+  console.log = () => {};
+  try {
+    await assert.rejects(() => runClientAdmin(["release-unknown-hold", "--transaction", transactionId]), /--confirm/);
+    await runClientAdmin(["release-unknown-hold", "--transaction", transactionId, "--confirm"]);
+    assert.deepEqual(filter, { ownerTransactionId: transactionId, state: "UNKNOWN_HOLD" });
+  } finally { UpstreamAccountLock.deleteOne = originalDelete; console.log = originalLog; }
 });

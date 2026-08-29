@@ -8,7 +8,7 @@ Copy `.env.example` to `.env` and replace placeholders outside source control. N
 | `HOST` | No | `127.0.0.1` | Validated HTTP bind hostname or IP. For the Nginx deployment, keep this at loopback so the Node service is not exposed on all interfaces. |
 | `MONGO_URI` | Yes for API | None | MongoDB connection string. Startup waits for a connection. |
 | `INTERNAL_API_KEY` | Yes for trusted backend | None | Server-to-server key sent as `x-internal-api-key`; never expose it to browser code. |
-| `MULTI_CLIENT_AUTH_ENABLED` | No | `false` | Enables Prompt 2 client-auth configuration validation. No V2 HTTP routes are mounted until Prompt 3. |
+| `MULTI_CLIENT_AUTH_ENABLED` | No | `false` | Enables tenant-scoped V2 routes authenticated by `x-client-api-key`. |
 | `CLIENT_API_KEY_PEPPER` | When multi-client auth is enabled; required by the operator CLI | None | Base64-encoded exactly 32-byte server-side HMAC pepper used to verify generated Client API Key secrets. Store in a secret manager, never MongoDB. |
 | `CLIENT_DATA_ENCRYPTION_KEY` | When multi-client auth is enabled | None | Separate Base64-encoded exactly 32-byte AES-256-GCM key for V2 LoginChallenge phone encryption and lookup protection. Do not reuse the Hago session key. |
 | `HAGO_SESSION_ENCRYPTION_KEY` | Yes for API | None | Base64-encoded, exactly 32-byte AES-256-GCM key for `hagouid` and `uaasCookie` at rest. |
@@ -24,7 +24,11 @@ Copy `.env.example` to `.env` and replace placeholders outside source control. N
 
 The API fails startup when `MONGO_URI`, `INTERNAL_API_KEY`, or `HAGO_SESSION_ENCRYPTION_KEY` is missing, when the encryption key is not valid Base64 32-byte material, or when numeric timeouts are invalid. Keep the encryption key in a secret manager. `INTERNAL_API_KEY` authenticates only the trusted website/backend caller. A browser must send its FingerprintJS device ID to that backend, not directly to this adapter. `HAGO_COUNTRY` is a locale header, not the numeric phone `countryCode` used by UAAS.
 
-Prompt 2 preserves that V1 compatibility behavior. It introduces distinct, versioned Client API Keys for future V2 website/backend integrations. A Client API Key is not a Hago credential and is never accepted in the `x-internal-api-key` header. When `MULTI_CLIENT_AUTH_ENABLED=true`, startup additionally requires valid `CLIENT_API_KEY_PEPPER` and `CLIENT_DATA_ENCRYPTION_KEY` values. Generate each with a cryptographically secure 32-byte secret, for example `openssl rand -base64 32`, and keep both in the secret manager.
+V1 compatibility remains behind `x-internal-api-key`. V2 uses distinct, versioned Client API Keys in `x-client-api-key`; a Client API Key is not a Hago credential and is never accepted by a V1 route. When `MULTI_CLIENT_AUTH_ENABLED=true`, startup additionally requires valid `CLIENT_API_KEY_PEPPER` and `CLIENT_DATA_ENCRYPTION_KEY` values. Generate each with a cryptographically secure 32-byte secret, for example `openssl rand -base64 32`, and keep both in the secret manager. V2 encrypted Connections, challenge ownership, and V2 transaction/idempotency lookups are tenant-scoped; legacy V1 data requires the separately planned explicit data migration.
+
+Before enabling V2 financial traffic against an existing deployment, an operator must back up MongoDB and run `npm run migrate:prompt3-indexes` as a dry run, then execute it with `-- --apply` during a maintenance window. It replaces the legacy global `idempotencyKey` unique index with separate partial unique indexes for legacy V1 and tenant-scoped V2 records. The application never performs that index migration automatically.
+
+`UNKNOWN_HOLD` records are never released by HTTP or retry logic. After independent manual review, an operator may run `npm run client-admin -- list-unknown-holds` and then `npm run client-admin -- release-unknown-hold --transaction <local-transaction-id> --confirm`. The command matches only the owner transaction and reports no upstream account hash, cookie, or Hago identifier.
 
 There is no configuration override for Hago session derivation. After successful SMS auth, the adapter prefers complete authoritative `Set-Cookie` values; otherwise it applies the fixed, bundle-confirmed browser derivation and fails closed if the response is incomplete or invalid.
 

@@ -3,6 +3,7 @@ const dotenv = require("dotenv");
 const mongoose = require("mongoose");
 const Client = require("../src/models/Client");
 const ClientApiKey = require("../src/models/ClientApiKey");
+const UpstreamAccountLock = require("../src/models/UpstreamAccountLock");
 const { parseClientApiKeyPepper, requireNonEmpty } = require("../src/config/runtime");
 const { generateClientApiKey } = require("../src/services/clientKeyService");
 
@@ -25,6 +26,9 @@ function safeClient(client) {
 
 function safeKey(key) {
   return { keyId: key.keyId, status: key.status, label: key.label, expiresAt: key.expiresAt, revokedAt: key.revokedAt, lastUsedAt: key.lastUsedAt, createdAt: key.createdAt };
+}
+function safeUnknownHold(lock) {
+  return { transactionId: String(lock.ownerTransactionId), clientId: String(lock.clientId), connectionId: lock.connectionId, heldAt: lock.heldAt, unknownAt: lock.unknownAt };
 }
 
 function parseExpiration(value) {
@@ -91,7 +95,21 @@ async function run(args) {
     console.log(JSON.stringify(safeKey(key)));
     return;
   }
-  throw new Error("Unknown command. Use create-client, list-clients, disable-client, enable-client, create-key, rotate-key, list-keys, disable-key, or revoke-key.");
+  if (command === "list-unknown-holds") {
+    const holds = await UpstreamAccountLock.find({ state: "UNKNOWN_HOLD" }).sort({ unknownAt: 1 });
+    console.log(JSON.stringify(holds.map(safeUnknownHold)));
+    return;
+  }
+  if (command === "release-unknown-hold") {
+    requireConfirmation(args);
+    const transactionId = option(args, "--transaction", { required: true });
+    if (!/^[a-f\d]{24}$/i.test(transactionId)) throw new Error("--transaction must be a transaction id");
+    const result = await UpstreamAccountLock.deleteOne({ ownerTransactionId: transactionId, state: "UNKNOWN_HOLD" });
+    if (result.deletedCount !== 1) throw new Error("Unknown hold not found for transaction");
+    console.log(JSON.stringify({ released: true, transactionId }));
+    return;
+  }
+  throw new Error("Unknown command. Use create-client, list-clients, disable-client, enable-client, create-key, rotate-key, list-keys, disable-key, revoke-key, list-unknown-holds, or release-unknown-hold.");
 }
 
 async function main() {
@@ -107,4 +125,4 @@ if (require.main === module) {
   main().catch(() => { console.error("Client administration command failed"); process.exitCode = 1; });
 }
 
-module.exports = { option, requireConfirmation, parseExpiration, safeClient, safeKey, run };
+module.exports = { option, requireConfirmation, parseExpiration, safeClient, safeKey, safeUnknownHold, run };

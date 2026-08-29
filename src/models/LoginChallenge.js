@@ -21,7 +21,7 @@ const LoginChallengeSchema = new mongoose.Schema({
   deviceBindingDigest: { type: String, required: true, select: false, match: /^[a-f0-9]{64}$/ },
   country: { type: String, default: null, match: /^[A-Z]{2}$/ },
   language: { type: String, default: null, match: /^[a-z]{2,10}(?:-[A-Za-z0-9]+)?$/ },
-  status: { type: String, enum: ["OTP_SENT", "VERIFYING", "CONSUMED", "FAILED"], default: "OTP_SENT", required: true },
+  status: { type: String, enum: ["REQUESTING", "OTP_SENT", "VERIFYING", "CONSUMED", "FAILED"], default: "OTP_SENT", required: true },
   expiresAt: { type: Date, required: true },
   verifyAttempts: { type: Number, default: 0, min: 0, max: 10 },
   consumedAt: { type: Date, default: null },

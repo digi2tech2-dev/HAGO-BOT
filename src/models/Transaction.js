@@ -1,7 +1,11 @@
 const mongoose = require("mongoose");
 
 const TransactionSchema = new mongoose.Schema({
-  agentPhone: { type: String, required: true },
+  // V2 records are tenant-owned. Legacy V1 records intentionally remain
+  // unassigned until the explicit production migration in Prompt 4.
+  clientId: { type: mongoose.Schema.Types.ObjectId, ref: "Client", default: undefined, index: true },
+  connectionId: { type: String, default: undefined, index: true },
+  agentPhone: { type: String, required: function () { return !this.clientId; }, default: null },
   targetId: { type: String, required: true },
 
   serviceType: {
@@ -39,12 +43,20 @@ const TransactionSchema = new mongoose.Schema({
   // nor seqId is persisted because both are sensitive/ephemeral protocol data.
   sendAttemptedAt: { type: Date, default: null },
   sendAttempts: { type: Number, default: 0, min: 0, max: 1 },
-  idempotencyKey: { type: String, required: true, unique: true, sparse: true },
+  idempotencyKey: { type: String, required: true, sparse: true },
   intentFingerprint: { type: String, required: true },
   upstreamStatus: { type: String, enum: ["NOT_SENT", "SEND_PENDING", "SUCCESS", "FAILED", "UNKNOWN"], default: "NOT_SENT" },
   createdAt: { type: Date, default: Date.now },
 });
 
 TransactionSchema.index({ agentPhone: 1, createdAt: -1 });
+// Preserve legacy V1 idempotency until V1 retirement; V2 is independently
+// scoped by clientId and never collides with another tenant.
+// MongoDB partial indexes cannot use `$exists: false`. Equality to null also
+// matches legacy records where clientId is absent, while V2 ObjectId values
+// are isolated by the separate tenant index below.
+TransactionSchema.index({ clientId: 1, idempotencyKey: 1 }, { unique: true, partialFilterExpression: { clientId: null, idempotencyKey: { $exists: true } }, name: "legacy_idempotency_key_unique" });
+TransactionSchema.index({ clientId: 1, idempotencyKey: 1 }, { unique: true, partialFilterExpression: { clientId: { $exists: true }, idempotencyKey: { $exists: true } } });
+TransactionSchema.index({ clientId: 1, connectionId: 1, createdAt: -1 });
 
 module.exports = mongoose.model("Transaction", TransactionSchema);

@@ -34,11 +34,11 @@ MongoDB ← User session records and local transaction attempts
 
 `npm start` waits for MongoDB before listening. The adapter is consumed directly by a trusted website/backend using the server-to-server key.
 
-## Multi-client foundation (Prompt 2)
+## Multi-client / Connection API (Prompt 3)
 
-The adapter now includes a multi-client authentication foundation: `Client`, `ClientApiKey`, and durable `LoginChallenge` models; versioned high-entropy client API keys; keyed HMAC verification; and an operator-only client-management CLI. This is not full tenant isolation yet. Existing `User` sessions, transactions, and all `/api` routes remain legacy V1 resources until the Prompt 3 Connection migration.
+The adapter supports a tenant-scoped V2 API: `Client`, `ClientApiKey`, durable `LoginChallenge`, and encrypted `Connection` records. A V2 website/backend authenticates only with `x-client-api-key`, creates a challenge, verifies its OTP, then performs operations through an opaque `connectionId`. Tenant-owned connections and V2 transactions are always queried with the authenticated `req.auth.clientId`; caller-supplied client IDs are never accepted. Legacy V1 resources and `/api/*` routes remain isolated behind `x-internal-api-key` for compatibility.
 
-`x-internal-api-key` remains a V1 compatibility credential only. It is not interchangeable with the future V2 `x-client-api-key` header. Client API keys are for website/backends, never browser code, and their plaintext value is shown only once at creation. No V2 OTP endpoint is published in Prompt 2, so no route claims to have sent an OTP or created a connection.
+`x-internal-api-key` remains a V1 compatibility credential only. It is not interchangeable with `x-client-api-key`. Client API keys are for website/backends, never browser code, and their plaintext value is shown only once at creation. V2 challenges store encrypted phone material and a keyed device binding; OTP, raw deviceId, and Hago session derivation material are never persisted.
 
 ## Authentication layers
 
@@ -63,7 +63,7 @@ For compatibility, an existing record that previously stored `h_open_id` in `hag
 
 ## Current API
 
-All `/api/*` routes use `POST` and require `Content-Type: application/json` plus `x-internal-api-key`. `/health` and `/ready` are unauthenticated `GET` endpoints and do not contact Hago.
+Legacy `/api/auth/*` and `/api/bot/*` routes use `POST` and require `Content-Type: application/json` plus `x-internal-api-key`. Tenant-scoped `/api/v2/*` routes require `x-client-api-key` instead. `/health` and `/ready` are unauthenticated `GET` endpoints and do not contact Hago.
 
 `GET /docs` serves the local Swagger UI and `GET /openapi.json` serves its OpenAPI 3.0.3 contract. They never call Hago. They are enabled by default outside production; in production, set `SWAGGER_ENABLED=true` to expose both routes.
 
@@ -100,9 +100,9 @@ Copy `.env.example` to `.env`; do not commit it.
 | `HOST` | HTTP bind address; defaults to `127.0.0.1`. Keep the adapter on loopback behind Nginx unless a deliberate deployment design requires another validated hostname/IP. |
 | `MONGO_URI` | Required MongoDB connection string. |
 | `INTERNAL_API_KEY` | Required server-to-server API key. |
-| `MULTI_CLIENT_AUTH_ENABLED` | Default `false`. Prompt 2 adds multi-client foundations but no V2 routes; enabling it validates the client-secret values below. |
+| `MULTI_CLIENT_AUTH_ENABLED` | Default `false`. When `true`, mounts V2 tenant-scoped Connection routes using `x-client-api-key`. |
 | `CLIENT_API_KEY_PEPPER` | Base64-encoded 32-byte server-side HMAC pepper for Client API Key verification. Keep only in a secret manager, never MongoDB. |
-| `CLIENT_DATA_ENCRYPTION_KEY` | Separate Base64-encoded 32-byte AES-256-GCM key for future V2 LoginChallenge phone protection. |
+| `CLIENT_DATA_ENCRYPTION_KEY` | Separate Base64-encoded 32-byte AES-256-GCM key for V2 LoginChallenge phone protection and tenant lookup digests. |
 | `HAGO_SESSION_ENCRYPTION_KEY` | Required Base64-encoded 32-byte AES-256-GCM key for persisted cookie material. |
 | `HAGO_REQUEST_TIMEOUT_MS` | Hago client timeout; defaults to the bundle-confirmed `15000`. |
 | `HAGO_TURNOVER_BASE_URL` | Read-only turnover base URL; defaults to the captured host. |

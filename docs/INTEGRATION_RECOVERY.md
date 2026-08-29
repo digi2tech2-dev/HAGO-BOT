@@ -6,13 +6,13 @@ The executable adapter now has isolated integration components for UAAS, yMicro,
 
 Before this recovery, UAAS signing and turnover were placeholders that returned `BLOCKED`. The recharge-agent bundle and captured HTTP request shape now support the read-only turnover implementation. Complete web-login evidence now also confirms the SMS TripleDES rule and a synthetic compatibility vector. One authorized controlled account has completed authentication, read-only operations, and one controlled Diamond transfer; no captured identifiers, credentials, cookies, device IDs, or balances are retained here.
 
-## Platform multi-client foundation (Prompt 2)
+## Platform tenant isolation (Prompt 3)
 
-Client authentication is now a separate platform concern: `Client` and `ClientApiKey` records support independently generated, versioned `hago_live_v1_<keyId>_<secret>` credentials. Only the HMAC-SHA-256 digest of the 256-bit generated secret is persisted; a server-side `CLIENT_API_KEY_PEPPER` stays outside MongoDB. Disabled, revoked, expired, and disabled-parent-client keys fail authentication. The future middleware attaches only safe client/key identifiers.
+Client authentication is a separate platform concern: `Client` and `ClientApiKey` records support independently generated, versioned `hago_live_v1_<keyId>_<secret>` credentials. Only the HMAC-SHA-256 digest of the 256-bit generated secret is persisted; a server-side `CLIENT_API_KEY_PEPPER` stays outside MongoDB. Disabled, revoked, expired, and disabled-parent-client keys fail authentication. V2 middleware attaches only safe client/key identifiers.
 
-`LoginChallenge` is a durable, tenant-owned foundation with TTL expiry, encrypted phone material, keyed lookup/device-binding digests, and no stored OTP or raw device ID. No V2 OTP endpoint is exposed in this phase because a Connection resource is intentionally deferred to Prompt 3; no incomplete endpoint claims to send OTP or establish a Hago connection.
+`LoginChallenge` is durable and tenant-owned, with TTL expiry, encrypted phone material, keyed lookup/device-binding digests, and no stored OTP or raw device ID. V2 creates a `REQUESTING` challenge before the Hago OTP boundary, transitions it to `OTP_SENT` only on success, and atomically claims it as `VERIFYING` before verification. A successful full session becomes an encrypted tenant-owned `Connection`, returned only as opaque `connectionId`.
 
-Existing `x-internal-api-key`, `User`, Hago session storage, `Transaction`, idempotency, reconciliation, and `/api` routes remain legacy V1 compatibility behavior until Prompt 3. This is not yet full tenant isolation and does not change any Hago protocol behavior.
+Existing `/api` routes remain legacy V1 compatibility behavior behind `x-internal-api-key`. V2 remains strictly separate behind `x-client-api-key`: connections, V2 transaction lookups, idempotency, and reconciliation use `req.auth.clientId` plus opaque `connectionId`. Financial V2 sends acquire a Mongo-backed lock keyed by a keyed digest of the authenticated Hago account. Ambiguous results retain `UNKNOWN_HOLD` and are never retried automatically. Legacy V1 records remain outside V2 until an explicit data migration; no Hago protocol behavior changed.
 
 ## Protocol confidence
 
@@ -86,4 +86,4 @@ Authentication, read-only operations, Diamond, and Crystal are LIVE-VERIFIED onc
 
 ## API contract exposure
 
-`docs/openapi.json` is the route-derived OpenAPI 3.0.3 contract for all current endpoints. `GET /docs` serves its local Swagger UI and `GET /openapi.json` serves the raw contract; neither route calls Hago. They are enabled by default outside production and are disabled in production unless `SWAGGER_ENABLED=true`. Every `/api` operation declares the reusable `ApiKeyAuth` `x-internal-api-key` scheme; `/health` and `/ready` explicitly declare no security.
+`docs/openapi.json` is the route-derived OpenAPI 3.0.3 contract for all current endpoints. `GET /docs` serves its local Swagger UI and `GET /openapi.json` serves the raw contract; neither route calls Hago. They are enabled by default outside production and are disabled in production unless `SWAGGER_ENABLED=true`. Legacy `/api` operations declare `ApiKeyAuth` (`x-internal-api-key`); V2 operations declare `ClientApiKeyAuth` (`x-client-api-key`); `/health` and `/ready` explicitly declare no security.
