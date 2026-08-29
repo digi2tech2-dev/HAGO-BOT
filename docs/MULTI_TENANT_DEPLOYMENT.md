@@ -40,7 +40,7 @@ Desired final `transactions` index state:
 | `legacy_idempotency_key_unique` | Unique `{ clientId: 1, idempotencyKey: 1 }` only where `clientId: null`; this retains global V1 uniqueness for legacy/unassigned records. |
 | `client_idempotency_key_unique` | Unique `{ clientId: 1, idempotencyKey: 1 }` only where `clientId` exists; Client A and Client B may each use the same idempotency value. |
 
-The historical global `idempotencyKey_1` index prevents cross-client duplicate keys and must be replaced before V2 financial traffic is enabled. The migration script is dry-run by default, detects duplicate legacy or tenant records before any index change, creates only the named target indexes, and drops only the recognized global single-field idempotency index. It does not modify transaction documents or unrelated indexes.
+The historical **unique** global `idempotencyKey_1` index prevents cross-client duplicate keys and must be replaced before V2 financial traffic is enabled. A past schema declaration could also create a distinct **non-unique sparse** `idempotencyKey_1`; it is redundant because the two compound indexes above provide the required constraints. The migration script is dry-run by default, detects duplicate legacy or tenant records before any index change, creates only the named target indexes, and drops only either exact recognized single-field index definition. It does not modify transaction documents or unrelated indexes.
 
 Use a short maintenance window. Although modern MongoDB can build indexes with limited blocking, this migration has an unavoidable period after removing the global index and before both scoped unique indexes exist. Pause V2 financial requests and V1 transaction creation during the operation. Back up MongoDB first and verify the backup independently.
 
@@ -55,7 +55,8 @@ mongodump --uri "$MONGO_URI" --archive="/secure-backups/hago-before-v2-indexes.a
 # B. Inspect current transaction indexes without revealing credentials.
 mongosh "$MONGO_URI" --quiet --eval 'db.transactions.getIndexes().map(i => ({name:i.name,key:i.key,unique:!!i.unique,partialFilterExpression:i.partialFilterExpression || null}))'
 
-# C. Dry run: this must report duplicates: { legacy: 0, tenant: 0 }.
+# C. Dry run: this must report duplicates: { legacy: 0, tenant: 0 } and any
+# recognized historicalGlobalIndex or redundantSparseIndex. It changes nothing.
 npm run migrate:prompt3-indexes
 
 # D. During the approved maintenance window only, apply once.

@@ -43,7 +43,7 @@ const TransactionSchema = new mongoose.Schema({
   // nor seqId is persisted because both are sensitive/ephemeral protocol data.
   sendAttemptedAt: { type: Date, default: null },
   sendAttempts: { type: Number, default: 0, min: 0, max: 1 },
-  idempotencyKey: { type: String, required: true, sparse: true },
+  idempotencyKey: { type: String, required: true },
   intentFingerprint: { type: String, required: true },
   upstreamStatus: { type: String, enum: ["NOT_SENT", "SEND_PENDING", "SUCCESS", "FAILED", "UNKNOWN"], default: "NOT_SENT" },
   createdAt: { type: Date, default: Date.now },

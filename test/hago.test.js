@@ -2092,3 +2092,55 @@ test("migration CLI dry-run cannot create Mongoose indexes and apply changes onl
     assert.equal(JSON.parse(rerun.stdout).migrated, false);
   } finally { await client.close(); await server.stop(); }
 });
+
+test("migration CLI cleans only the redundant sparse idempotency index and model bootstrap cannot recreate it", async () => {
+  const server = await MongoMemoryServer.create({ binary: { version: "8.2.6" } });
+  const client = new MongoClient(server.getUri());
+  await client.connect();
+  const collection = client.db().collection("transactions");
+  const root = path.resolve(__dirname, "..");
+  const executeCli = (args = []) => spawnSync(process.execPath, ["scripts/migratePrompt3Indexes.js", ...args], {
+    cwd: root,
+    env: { ...process.env, MONGO_URI: server.getUri() },
+    encoding: "utf8",
+  });
+  const bootstrapModel = () => spawnSync(process.execPath, ["-e", "const mongoose=require('mongoose'); require('./src/models/Transaction'); mongoose.connect(process.env.MONGO_URI).then(()=>mongoose.disconnect()).catch(error=>{console.error(error.message);process.exitCode=1;});"], {
+    cwd: root,
+    env: { ...process.env, MONGO_URI: server.getUri() },
+    encoding: "utf8",
+  });
+  const snapshotIndexes = async () => (await collection.indexes()).sort((left, right) => left.name.localeCompare(right.name));
+  try {
+    await collection.insertOne({ marker: "unchanged", agentPhone: "synthetic-agent", idempotencyKey: "synthetic-order", targetId: "synthetic-target" });
+    await collection.createIndex({ agentPhone: 1, createdAt: -1 }, { name: "agentPhone_1_createdAt_-1" });
+    await collection.createIndex({ clientId: 1, idempotencyKey: 1 }, { name: "legacy_idempotency_key_unique", unique: true, partialFilterExpression: { clientId: null, idempotencyKey: { $exists: true } } });
+    await collection.createIndex({ clientId: 1, idempotencyKey: 1 }, { name: "client_idempotency_key_unique", unique: true, partialFilterExpression: { clientId: { $exists: true }, idempotencyKey: { $exists: true } } });
+    await collection.createIndex({ idempotencyKey: 1 }, { name: "idempotencyKey_1", sparse: true });
+    const documentsBefore = await collection.find({}).toArray();
+    const indexesBefore = await snapshotIndexes();
+
+    const dryRun = executeCli();
+    assert.equal(dryRun.status, 0, dryRun.stderr);
+    assert.equal(JSON.parse(dryRun.stdout).redundantSparseIndex, "idempotencyKey_1");
+    assert.deepEqual(await snapshotIndexes(), indexesBefore, "dry run leaves exact index snapshot unchanged");
+    assert.deepEqual(await collection.find({}).toArray(), documentsBefore);
+
+    const applied = executeCli(["--apply"]);
+    assert.equal(applied.status, 0, applied.stderr);
+    const indexesAfterApply = await snapshotIndexes();
+    assert.equal(indexesAfterApply.some((index) => index.name === "idempotencyKey_1"), false);
+    for (const name of ["legacy_idempotency_key_unique", "client_idempotency_key_unique", "agentPhone_1_createdAt_-1"]) assert.equal(indexesAfterApply.some((index) => index.name === name), true);
+    assert.deepEqual(await collection.find({}).toArray(), documentsBefore, "cleanup never mutates transactions");
+
+    const rerun = executeCli(["--apply"]);
+    assert.equal(rerun.status, 0, rerun.stderr);
+    assert.equal(JSON.parse(rerun.stdout).migrated, false);
+    const bootstrapped = bootstrapModel();
+    assert.equal(bootstrapped.status, 0, bootstrapped.stderr);
+    assert.equal((await snapshotIndexes()).some((index) => index.name === "idempotencyKey_1"), false, "application model bootstrap does not recreate the redundant index");
+    const schemaIndexes = Transaction.schema.indexes();
+    assert.equal(schemaIndexes.some(([key]) => Object.keys(key).length === 1 && key.idempotencyKey === 1), false);
+    assert.equal(schemaIndexes.some(([, options]) => options.name === "legacy_idempotency_key_unique"), true);
+    assert.equal(schemaIndexes.some(([, options]) => options.name === "client_idempotency_key_unique"), true);
+  } finally { await client.close(); await server.stop(); }
+});
