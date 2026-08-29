@@ -1,0 +1,356 @@
+{
+  "info": {
+    "_postman_id": "f3f31b8c-72f1-45e2-aef0-15d0ed8b43c8",
+    "name": "Hago Automation Recovery",
+    "description": "Current API collection. No request contains Hago credentials. Diamond and Crystal are each LIVE-VERIFIED once under guarded paths. Default mutation examples remain disabled and controlled examples require separate explicit authorization.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    { "key": "adapterBaseUrl", "value": "http://localhost:3000" },
+    { "key": "baseUrl", "value": "http://localhost:3000/api" },
+    { "key": "internalApiKey", "value": "<set-in-your-local-environment>" },
+    { "key": "phone", "value": "<set-phone>" },
+    { "key": "otp", "value": "<set-otp>" },
+    { "key": "countryCode", "value": "<set-numeric-country-code>" },
+    { "key": "deviceId", "value": "<set-trusted-browser-fingerprintjs-visitor-id>" },
+    { "key": "agentPhone", "value": "<set-agent-phone>" },
+    { "key": "targetId", "value": "<set-target-id>" },
+    { "key": "amount", "value": "<set-authorized-controlled-test-amount>" },
+    { "key": "nobilityType", "value": "1" },
+    { "key": "transactionId", "value": "<set-local-unknown-transaction-id>" }
+  ],
+  "item": [
+    {
+      "name": "Runtime",
+      "item": [
+        {
+          "name": "Health (local liveness only)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{adapterBaseUrl}}/health",
+            "description": "No authentication, MongoDB, or Hago request. Expected HTTP 200."
+          },
+          "response": []
+        },
+        {
+          "name": "Ready (local dependencies only)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{adapterBaseUrl}}/ready",
+            "description": "No Hago request. Expected HTTP 200 only with valid configuration and MongoDB connectivity."
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Authentication",
+      "item": [
+        {
+          "name": "Send OTP",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "x-internal-api-key", "value": "{{internalApiKey}}" }
+            ],
+            "body": { "mode": "raw", "raw": "{\n  \"phone\": \"{{phone}}\",\n  \"countryCode\": \"{{countryCode}}\"\n}" },
+            "url": "{{baseUrl}}/auth/send-otp",
+            "description": "Uses the proven UAAS sendCode signature. Do not run against Hago unless the controlled live verification is authorized."
+          },
+          "response": []
+        },
+        {
+          "name": "Verify OTP (requires a pending OTP request)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "x-internal-api-key", "value": "{{internalApiKey}}" }
+            ],
+            "body": { "mode": "raw", "raw": "{\n  \"phone\": \"{{phone}}\",\n  \"otp\": \"{{otp}}\",\n  \"deviceId\": \"{{deviceId}}\"\n}" },
+            "url": "{{baseUrl}}/auth/verify-otp",
+            "description": "Requires a pending OTP request and a trusted stable browser device ID. No session cookie is returned by this API."
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Session & Read-Only",
+      "item": [
+        {
+          "name": "Validate stored session",
+          "request": {
+            "method": "POST",
+            "header": [ { "key": "Content-Type", "value": "application/json" }, { "key": "x-internal-api-key", "value": "{{internalApiKey}}" } ],
+            "body": { "mode": "raw", "raw": "{\n  \"agentPhone\": \"{{agentPhone}}\"\n}" },
+            "url": "{{baseUrl}}/bot/session/validate"
+          },
+          "response": []
+        },
+        {
+          "name": "Transfer readiness (read-only diagnostic)",
+          "request": {
+            "method": "POST",
+            "header": [ { "key": "Content-Type", "value": "application/json" }, { "key": "x-internal-api-key", "value": "{{internalApiKey}}" } ],
+            "body": { "mode": "raw", "raw": "{\n  \"agentPhone\": \"{{agentPhone}}\"\n}" },
+            "url": "{{baseUrl}}/bot/transfer-readiness",
+            "description": "Strictly read-only diagnostic: session, agency, raw permission status, password presence, and wallet readiness only. Does not send transfer_account or call password verification/setup."
+          },
+          "response": []
+        },
+        {
+          "name": "Nobility readiness (read-only diagnostic)",
+          "request": {
+            "method": "POST",
+            "header": [ { "key": "Content-Type", "value": "application/json" }, { "key": "x-internal-api-key", "value": "{{internalApiKey}}" } ],
+            "body": { "mode": "raw", "raw": "{\n  \"agentPhone\": \"{{agentPhone}}\",\n  \"targetId\": \"{{targetId}}\"\n}" },
+            "url": "{{baseUrl}}/bot/nobility-readiness",
+            "description": "READ-ONLY: resolves the target VID, then queries Noble configuration and current state using the stored account session. It never calls BuyNobleByAgency or any financial mutation endpoint. Run only under separate authorized live-read-only verification."
+          },
+          "response": []
+        },
+        {
+          "name": "Nobility purchase readiness (read-only final gate)",
+          "request": {
+            "method": "POST",
+            "header": [ { "key": "Content-Type", "value": "application/json" }, { "key": "x-internal-api-key", "value": "{{internalApiKey}}" } ],
+            "body": { "mode": "raw", "raw": "{\n  \"agentPhone\": \"{{agentPhone}}\",\n  \"targetId\": \"{{targetId}}\",\n  \"nobilityType\": {{nobilityType}}\n}" },
+            "url": "{{baseUrl}}/bot/nobility-purchase-readiness",
+            "description": "READ-ONLY FINAL GATE: refreshes session, target, Noble configuration/state, and legacy Diamond balance to report the current derived cost and technical eligibility. It creates no transaction intent, needs no Idempotency-Key or X-Controlled-Mutation header, does not authorize a purchase, and never calls BuyNobleByAgency. Run only under separate authorized live-read-only verification."
+          },
+          "response": []
+        },
+        {
+          "name": "Verify target ID",
+          "request": {
+            "method": "POST",
+            "header": [ { "key": "Content-Type", "value": "application/json" }, { "key": "x-internal-api-key", "value": "{{internalApiKey}}" } ],
+            "body": { "mode": "raw", "raw": "{\n  \"agentPhone\": \"{{agentPhone}}\",\n  \"targetId\": \"{{targetId}}\"\n}" },
+            "url": "{{baseUrl}}/bot/verify-id"
+          },
+          "response": []
+        },
+        {
+          "name": "Get agent profile",
+          "request": {
+            "method": "POST",
+            "header": [ { "key": "Content-Type", "value": "application/json" }, { "key": "x-internal-api-key", "value": "{{internalApiKey}}" } ],
+            "body": { "mode": "raw", "raw": "{\n  \"agentPhone\": \"{{agentPhone}}\"\n}" },
+            "url": "{{baseUrl}}/bot/agent-profile"
+          },
+          "response": []
+        },
+        {
+          "name": "Get wallet",
+          "request": {
+            "method": "POST",
+            "header": [ { "key": "Content-Type", "value": "application/json" }, { "key": "x-internal-api-key", "value": "{{internalApiKey}}" } ],
+            "body": { "mode": "raw", "raw": "{\n  \"agentPhone\": \"{{agentPhone}}\"\n}" },
+            "url": "{{baseUrl}}/bot/wallet-balance",
+            "description": "Uses proven read-only turnover signing. Do not run against Hago without controlled authorization."
+          },
+          "response": []
+        },
+        {
+          "name": "Get account history",
+          "request": {
+            "method": "POST",
+            "header": [ { "key": "Content-Type", "value": "application/json" }, { "key": "x-internal-api-key", "value": "{{internalApiKey}}" } ],
+            "body": { "mode": "raw", "raw": "{\n  \"agentPhone\": \"{{agentPhone}}\",\n  \"page\": 1,\n  \"pagesize\": 20\n}" },
+            "url": "{{baseUrl}}/bot/account-history",
+            "description": "Signed read-only history query; not an authoritative settlement ledger."
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Local Transactions",
+      "item": [
+        {
+          "name": "List local transaction attempts",
+          "request": {
+            "method": "POST",
+            "header": [ { "key": "Content-Type", "value": "application/json" }, { "key": "x-internal-api-key", "value": "{{internalApiKey}}" } ],
+            "body": { "mode": "raw", "raw": "{\n  \"agentPhone\": \"{{agentPhone}}\"\n}" },
+            "url": "{{baseUrl}}/bot/transactions",
+            "description": "This is a local attempt history, not an authoritative Hago transaction ledger."
+          },
+          "response": []
+        },
+        {
+          "name": "Reconcile attempted UNKNOWN transaction (read-only)",
+          "request": {
+            "method": "POST",
+            "header": [ { "key": "Content-Type", "value": "application/json" }, { "key": "x-internal-api-key", "value": "{{internalApiKey}}" } ],
+            "body": { "mode": "raw", "raw": "{\n  \"agentPhone\": \"{{agentPhone}}\",\n  \"transactionId\": \"{{transactionId}}\"\n}" },
+            "url": "{{baseUrl}}/bot/transactions/reconcile",
+            "description": "READ-ONLY. It can inspect wallet/history for an attempted UNKNOWN local record but never retries a mutation or changes the transaction outcome automatically."
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Mutations - Disabled",
+      "item": [
+        {
+          "name": "Diamond request parity preview (local only)",
+          "request": {
+            "method": "POST",
+            "header": [ { "key": "Content-Type", "value": "application/json" }, { "key": "x-internal-api-key", "value": "{{internalApiKey}}" } ],
+            "body": { "mode": "raw", "raw": "{\n  \"agentPhone\": \"{{agentPhone}}\",\n  \"targetId\": \"{{targetId}}\",\n  \"amount\": \"{{amount}}\"\n}" },
+            "url": "{{baseUrl}}/bot/auto-recharge/diamond/preview",
+            "description": "LOCAL ONLY: reports sanitized request-shape parity. It does not load a session, resolve VID, query wallet, or call Hago; no Idempotency-Key or controlled-mutation header is needed."
+          },
+          "response": []
+        },
+        {
+          "name": "Diamond (expected fail-closed)",
+          "request": {
+            "method": "POST",
+            "header": [ { "key": "Content-Type", "value": "application/json" }, { "key": "x-internal-api-key", "value": "{{internalApiKey}}" }, { "key": "Idempotency-Key", "value": "{{$guid}}" } ],
+            "body": { "mode": "raw", "raw": "{\n  \"agentPhone\": \"{{agentPhone}}\",\n  \"targetId\": \"{{targetId}}\",\n  \"amount\": \"{{amount}}\"\n}" },
+            "url": "{{baseUrl}}/bot/auto-recharge/diamond",
+            "description": "With an active agent: HTTP 503, local transaction status UNKNOWN, upstreamStatus NOT_SENT; no Hago request."
+          },
+          "response": []
+        },
+        {
+          "name": "Crystal (expected fail-closed)",
+          "request": {
+            "method": "POST",
+            "header": [ { "key": "Content-Type", "value": "application/json" }, { "key": "x-internal-api-key", "value": "{{internalApiKey}}" }, { "key": "Idempotency-Key", "value": "{{$guid}}" } ],
+            "body": { "mode": "raw", "raw": "{\n  \"agentPhone\": \"{{agentPhone}}\",\n  \"targetId\": \"{{targetId}}\",\n  \"amount\": \"{{amount}}\"\n}" },
+            "url": "{{baseUrl}}/bot/auto-recharge/crystal",
+            "description": "With an active agent: HTTP 503, local transaction status UNKNOWN, upstreamStatus NOT_SENT; no Hago request."
+          },
+          "response": []
+        },
+        {
+          "name": "Crystal request parity preview (local only)",
+          "request": {
+            "method": "POST",
+            "header": [ { "key": "Content-Type", "value": "application/json" }, { "key": "x-internal-api-key", "value": "{{internalApiKey}}" } ],
+            "body": { "mode": "raw", "raw": "{\n  \"agentPhone\": \"{{agentPhone}}\",\n  \"targetId\": \"{{targetId}}\",\n  \"amount\": \"{{amount}}\"\n}" },
+            "url": "{{baseUrl}}/bot/auto-recharge/crystal/preview",
+            "description": "LOCAL ONLY: reports fixed Crystal currency 1826 and request structure. It does not load a session, query balance or permissions, or call Hago."
+          },
+          "response": []
+        },
+        {
+          "name": "Nobility (feature switch disabled by default)",
+          "request": {
+            "method": "POST",
+            "header": [ { "key": "Content-Type", "value": "application/json" }, { "key": "x-internal-api-key", "value": "{{internalApiKey}}" }, { "key": "Idempotency-Key", "value": "{{$guid}}" } ],
+            "body": { "mode": "raw", "raw": "{\n  \"agentPhone\": \"{{agentPhone}}\",\n  \"targetId\": \"{{targetId}}\",\n  \"nobilityType\": {{nobilityType}}\n}" },
+            "url": "{{baseUrl}}/bot/auto-recharge/nobility",
+            "description": "Financial mutation. With HAGO_NOBILITY_ENABLED=false: HTTP 503 and no Hago request. With the operator switch true, it requires only this Idempotency-Key, derives fresh price/package internally, and may deduct the dynamic resolved Diamond cost. Do not run without explicit production authorization; first live financial outcome is pending."
+          },
+          "response": []
+        }
+        ,{
+          "name": "Nobility RPC/payload preview (local only)",
+          "request": {
+            "method": "POST",
+            "header": [ { "key": "Content-Type", "value": "application/json" }, { "key": "x-internal-api-key", "value": "{{internalApiKey}}" } ],
+            "body": { "mode": "raw", "raw": "{\n  \"agentPhone\": \"{{agentPhone}}\",\n  \"targetId\": \"{{targetId}}\",\n  \"nobilityType\": \"{{nobilityType}}\",\n  \"buyType\": 1\n}" },
+            "url": "{{baseUrl}}/bot/auto-recharge/nobility/preview",
+            "description": "LOCAL ONLY: reports confirmed Noble enum/RPC metadata without loading a session, config, target state, or making an upstream request."
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Mutations - Controlled Paths (authorization required)",
+      "item": [
+        {
+          "name": "Diamond (controlled one-shot test)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "x-internal-api-key", "value": "{{internalApiKey}}" },
+              { "key": "Idempotency-Key", "value": "{{$guid}}" },
+              { "key": "X-Controlled-Mutation", "value": "true" }
+            ],
+            "body": { "mode": "raw", "raw": "{\n  \"agentPhone\": \"{{agentPhone}}\",\n  \"targetId\": \"{{targetId}}\",\n  \"amount\": \"{{amount}}\"\n}" },
+            "url": "{{baseUrl}}/bot/auto-recharge/diamond",
+            "description": "Diamond was LIVE-VERIFIED once under this guarded path: code 1 and wallet reduction equal to the sent amount. This request still requires new explicit authorization plus HAGO_MUTATIONS_ENABLED=true, HAGO_CONTROLLED_MUTATION_MODE=true, and an authorized HAGO_CONTROLLED_MUTATION_MAX_AMOUNT. Send exactly once. Do not replay after a timeout or UNKNOWN result."
+          },
+          "response": []
+        },
+        {
+          "name": "Crystal (controlled one-shot test)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "x-internal-api-key", "value": "{{internalApiKey}}" },
+              { "key": "Idempotency-Key", "value": "{{$guid}}" },
+              { "key": "X-Controlled-Mutation", "value": "true" }
+            ],
+            "body": { "mode": "raw", "raw": "{\n  \"agentPhone\": \"{{agentPhone}}\",\n  \"targetId\": \"{{targetId}}\",\n  \"amount\": \"{{amount}}\"\n}" },
+            "url": "{{baseUrl}}/bot/auto-recharge/crystal",
+            "description": "LIVE-VERIFIED once: one authorized controlled request returned code 1 and the wallet balance decreased by exactly the sent amount. Every new request still requires explicit authorization, both mutation environment flags, an authorized ceiling, and sufficient current Crystal balance. Send exactly once; never retry an UNKNOWN outcome."
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Security Checks",
+      "item": [
+        {
+          "name": "Missing internal API key",
+          "request": {
+            "method": "POST",
+            "header": [ { "key": "Content-Type", "value": "application/json" } ],
+            "body": { "mode": "raw", "raw": "{\n  \"agentPhone\": \"{{agentPhone}}\"\n}" },
+            "url": "{{baseUrl}}/bot/transactions",
+            "description": "Expected: HTTP 401."
+          },
+          "response": []
+        },
+        {
+          "name": "Invalid internal API key",
+          "request": {
+            "method": "POST",
+            "header": [ { "key": "Content-Type", "value": "application/json" }, { "key": "x-internal-api-key", "value": "invalid-key" } ],
+            "body": { "mode": "raw", "raw": "{\n  \"agentPhone\": \"{{agentPhone}}\"\n}" },
+            "url": "{{baseUrl}}/bot/transactions",
+            "description": "Expected: HTTP 401."
+          },
+          "response": []
+        },
+        {
+          "name": "Mutation without Idempotency-Key",
+          "request": {
+            "method": "POST",
+            "header": [ { "key": "Content-Type", "value": "application/json" }, { "key": "x-internal-api-key", "value": "{{internalApiKey}}" } ],
+            "body": { "mode": "raw", "raw": "{\n  \"agentPhone\": \"{{agentPhone}}\",\n  \"targetId\": \"{{targetId}}\",\n  \"amount\": \"{{amount}}\"\n}" },
+            "url": "{{baseUrl}}/bot/auto-recharge/diamond",
+            "description": "Expected: HTTP 400. The source validates Idempotency-Key before account lookup or attempt creation."
+          },
+          "response": []
+        },
+        {
+          "name": "Mutation with dynamic Idempotency-Key",
+          "request": {
+            "method": "POST",
+            "header": [ { "key": "Content-Type", "value": "application/json" }, { "key": "x-internal-api-key", "value": "{{internalApiKey}}" }, { "key": "Idempotency-Key", "value": "{{$guid}}" } ],
+            "body": { "mode": "raw", "raw": "{\n  \"agentPhone\": \"{{agentPhone}}\",\n  \"targetId\": \"{{targetId}}\",\n  \"amount\": \"{{amount}}\"\n}" },
+            "url": "{{baseUrl}}/bot/auto-recharge/diamond",
+            "description": "With an active agent, expected HTTP 503 and never SUCCESS. It remains local UNKNOWN / NOT_SENT and does not contact Hago."
+          },
+          "response": []
+        }
+      ]
+    }
+  ]
+}

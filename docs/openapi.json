@@ -1,0 +1,144 @@
+{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "Hago Integration Adapter API",
+    "version": "1.0.0",
+    "description": "Backend-only Hago adapter. Every /api operation is trusted server-to-server. The contract contains no credentials, account identifiers, OTPs, sessions, or live financial values."
+  },
+  "tags": [
+    { "name": "Health" },
+    { "name": "Authentication" },
+    { "name": "Session & Identity" },
+    { "name": "Read-only Diagnostics" },
+    { "name": "Wallet & History" },
+    { "name": "Transactions" },
+    { "name": "Previews" },
+    { "name": "Controlled Mutations" },
+    { "name": "Nobility" }
+  ],
+  "paths": {
+    "/health": {
+      "get": { "tags": ["Health"], "summary": "Process liveness", "security": [], "responses": { "200": { "$ref": "#/components/responses/Health" } } }
+    },
+    "/ready": {
+      "get": { "tags": ["Health"], "summary": "Local dependency readiness", "security": [], "responses": { "200": { "$ref": "#/components/responses/Ready" }, "503": { "$ref": "#/components/responses/Ready" } } }
+    },
+    "/api/auth/send-otp": {
+      "post": { "tags": ["Authentication"], "summary": "Request an OTP", "security": [{ "ApiKeyAuth": [] }], "requestBody": { "$ref": "#/components/requestBodies/SendOtp" }, "responses": { "200": { "$ref": "#/components/responses/Success" }, "400": { "$ref": "#/components/responses/Error" }, "401": { "$ref": "#/components/responses/Error" }, "429": { "$ref": "#/components/responses/Error" }, "503": { "$ref": "#/components/responses/Error" } } }
+    },
+    "/api/auth/verify-otp": {
+      "post": { "tags": ["Authentication"], "summary": "Verify an OTP and establish a session", "description": "The trusted website/backend forwards a stable browser deviceId. Cookies and session material are never returned.", "security": [{ "ApiKeyAuth": [] }], "requestBody": { "$ref": "#/components/requestBodies/VerifyOtp" }, "responses": { "200": { "$ref": "#/components/responses/Success" }, "400": { "$ref": "#/components/responses/Error" }, "401": { "$ref": "#/components/responses/Error" }, "503": { "$ref": "#/components/responses/Error" } } }
+    },
+    "/api/bot/session/validate": {
+      "post": { "tags": ["Session & Identity"], "summary": "Validate a stored Hago session", "security": [{ "ApiKeyAuth": [] }], "requestBody": { "$ref": "#/components/requestBodies/AgentPhone" }, "responses": { "200": { "$ref": "#/components/responses/SessionValidation" }, "400": { "$ref": "#/components/responses/Error" }, "401": { "$ref": "#/components/responses/Error" }, "404": { "$ref": "#/components/responses/Error" } } }
+    },
+    "/api/bot/verify-id": {
+      "post": { "tags": ["Session & Identity"], "summary": "Resolve a VID to an internal UID", "description": "The VID is never treated as the UID.", "security": [{ "ApiKeyAuth": [] }], "requestBody": { "$ref": "#/components/requestBodies/Target" }, "responses": { "200": { "$ref": "#/components/responses/Success" }, "400": { "$ref": "#/components/responses/Error" }, "401": { "$ref": "#/components/responses/Error" }, "404": { "$ref": "#/components/responses/Error" }, "502": { "$ref": "#/components/responses/Error" } } }
+    },
+    "/api/bot/agent-profile": {
+      "post": { "tags": ["Session & Identity"], "summary": "Read the authenticated agent profile", "description": "Uses authenticated hagouid, not UAAS h_open_id.", "security": [{ "ApiKeyAuth": [] }], "requestBody": { "$ref": "#/components/requestBodies/AgentPhone" }, "responses": { "200": { "$ref": "#/components/responses/Success" }, "400": { "$ref": "#/components/responses/Error" }, "401": { "$ref": "#/components/responses/Error" }, "404": { "$ref": "#/components/responses/Error" } } }
+    },
+    "/api/bot/transfer-readiness": {
+      "post": { "tags": ["Read-only Diagnostics"], "summary": "Read transfer prerequisites", "description": "Read-only. Does not accept a transaction password or send a transfer.", "security": [{ "ApiKeyAuth": [] }], "requestBody": { "$ref": "#/components/requestBodies/TransferReadiness" }, "responses": { "200": { "$ref": "#/components/responses/TransferReadiness" }, "400": { "$ref": "#/components/responses/Error" }, "401": { "$ref": "#/components/responses/Error" }, "404": { "$ref": "#/components/responses/Error" } } }
+    },
+    "/api/bot/nobility-readiness": {
+      "post": { "tags": ["Nobility", "Read-only Diagnostics"], "summary": "Read Noble configuration and target state", "description": "Read-only. Never calls BuyNobleByAgency.", "security": [{ "ApiKeyAuth": [] }], "requestBody": { "$ref": "#/components/requestBodies/NobilityReadiness" }, "responses": { "200": { "$ref": "#/components/responses/Success" }, "400": { "$ref": "#/components/responses/Error" }, "401": { "$ref": "#/components/responses/Error" }, "404": { "$ref": "#/components/responses/Error" }, "502": { "$ref": "#/components/responses/Error" } } }
+    },
+    "/api/bot/nobility-purchase-readiness": {
+      "post": { "tags": ["Nobility", "Read-only Diagnostics"], "summary": "Read current Nobility purchase eligibility", "description": "READ-ONLY. Creates no transaction intent and implies no authorization to purchase.", "security": [{ "ApiKeyAuth": [] }], "requestBody": { "$ref": "#/components/requestBodies/NobilityPurchaseReadiness" }, "responses": { "200": { "$ref": "#/components/responses/NobilityPurchaseReadiness" }, "400": { "$ref": "#/components/responses/Error" }, "401": { "$ref": "#/components/responses/Error" }, "404": { "$ref": "#/components/responses/Error" }, "409": { "$ref": "#/components/responses/Error" }, "502": { "$ref": "#/components/responses/Error" } } }
+    },
+    "/api/bot/wallet-balance": {
+      "post": { "tags": ["Wallet & History"], "summary": "Read normalized wallet balances", "security": [{ "ApiKeyAuth": [] }], "requestBody": { "$ref": "#/components/requestBodies/AgentPhone" }, "responses": { "200": { "$ref": "#/components/responses/WalletBalance" }, "400": { "$ref": "#/components/responses/Error" }, "401": { "$ref": "#/components/responses/Error" }, "404": { "$ref": "#/components/responses/Error" }, "502": { "$ref": "#/components/responses/Error" } } }
+    },
+    "/api/bot/account-history": {
+      "post": { "tags": ["Wallet & History"], "summary": "Read bounded account history", "description": "Read-only and not an authoritative settlement ledger.", "security": [{ "ApiKeyAuth": [] }], "requestBody": { "$ref": "#/components/requestBodies/AccountHistory" }, "responses": { "200": { "$ref": "#/components/responses/AccountHistory" }, "400": { "$ref": "#/components/responses/Error" }, "401": { "$ref": "#/components/responses/Error" }, "404": { "$ref": "#/components/responses/Error" }, "502": { "$ref": "#/components/responses/Error" } } }
+    },
+    "/api/bot/transactions": {
+      "post": { "tags": ["Transactions"], "summary": "List local transaction attempts", "security": [{ "ApiKeyAuth": [] }], "requestBody": { "$ref": "#/components/requestBodies/AgentPhone" }, "responses": { "200": { "$ref": "#/components/responses/TransactionList" }, "400": { "$ref": "#/components/responses/Error" }, "401": { "$ref": "#/components/responses/Error" } } }
+    },
+    "/api/bot/transactions/reconcile": {
+      "post": { "tags": ["Transactions"], "summary": "Read-only reconciliation aid", "description": "Does not retry, send a mutation, or automatically change outcome status.", "security": [{ "ApiKeyAuth": [] }], "requestBody": { "$ref": "#/components/requestBodies/Reconcile" }, "responses": { "200": { "$ref": "#/components/responses/Success" }, "400": { "$ref": "#/components/responses/Error" }, "401": { "$ref": "#/components/responses/Error" }, "404": { "$ref": "#/components/responses/Error" }, "409": { "$ref": "#/components/responses/Error" } } }
+    },
+    "/api/bot/auto-recharge/diamond/preview": {
+      "post": { "tags": ["Previews"], "summary": "Preview Diamond request structure locally", "description": "No Hago request, session, wallet, or VID lookup.", "security": [{ "ApiKeyAuth": [] }], "requestBody": { "$ref": "#/components/requestBodies/DiamondRecharge" }, "responses": { "200": { "$ref": "#/components/responses/Preview" }, "400": { "$ref": "#/components/responses/Error" }, "401": { "$ref": "#/components/responses/Error" } } }
+    },
+    "/api/bot/auto-recharge/crystal/preview": {
+      "post": { "tags": ["Previews"], "summary": "Preview Crystal request structure locally", "description": "No Hago request, session, wallet, or VID lookup.", "security": [{ "ApiKeyAuth": [] }], "requestBody": { "$ref": "#/components/requestBodies/CrystalRecharge" }, "responses": { "200": { "$ref": "#/components/responses/Preview" }, "400": { "$ref": "#/components/responses/Error" }, "401": { "$ref": "#/components/responses/Error" } } }
+    },
+    "/api/bot/auto-recharge/nobility/preview": {
+      "post": { "tags": ["Previews", "Nobility"], "summary": "Preview Nobility payload metadata locally", "description": "Structural only; never reads configuration, session, or Hago.", "security": [{ "ApiKeyAuth": [] }], "requestBody": { "$ref": "#/components/requestBodies/NobilityPreview" }, "responses": { "200": { "$ref": "#/components/responses/Preview" }, "400": { "$ref": "#/components/responses/Error" }, "401": { "$ref": "#/components/responses/Error" } } }
+    },
+    "/api/bot/auto-recharge/diamond": {
+      "post": { "tags": ["Controlled Mutations"], "summary": "Send one guarded Diamond transfer", "description": "CONTROLLED FINANCIAL MUTATION. Requires both Diamond/Crystal environment guards, a bounded ceiling, and X-Controlled-Mutation. One authorized controlled request is LIVE-VERIFIED once.", "security": [{ "ApiKeyAuth": [] }], "parameters": [{ "$ref": "#/components/parameters/IdempotencyKey" }, { "$ref": "#/components/parameters/ControlledMutation" }], "requestBody": { "$ref": "#/components/requestBodies/DiamondRecharge" }, "responses": { "200": { "$ref": "#/components/responses/Transaction" }, "400": { "$ref": "#/components/responses/Error" }, "401": { "$ref": "#/components/responses/Error" }, "409": { "$ref": "#/components/responses/Error" }, "502": { "$ref": "#/components/responses/Error" }, "503": { "$ref": "#/components/responses/Error" }, "504": { "$ref": "#/components/responses/Error" } } }
+    },
+    "/api/bot/auto-recharge/crystal": {
+      "post": { "tags": ["Controlled Mutations"], "summary": "Send one guarded Crystal transfer", "description": "CONTROLLED FINANCIAL MUTATION. Requires both Diamond/Crystal environment guards, a bounded ceiling, and X-Controlled-Mutation. One authorized controlled request returned code 1 and the wallet balance decreased by exactly the sent amount.", "security": [{ "ApiKeyAuth": [] }], "parameters": [{ "$ref": "#/components/parameters/IdempotencyKey" }, { "$ref": "#/components/parameters/ControlledMutation" }], "requestBody": { "$ref": "#/components/requestBodies/CrystalRecharge" }, "responses": { "200": { "$ref": "#/components/responses/Transaction" }, "400": { "$ref": "#/components/responses/Error" }, "401": { "$ref": "#/components/responses/Error" }, "409": { "$ref": "#/components/responses/Error" }, "502": { "$ref": "#/components/responses/Error" }, "503": { "$ref": "#/components/responses/Error" }, "504": { "$ref": "#/components/responses/Error" } } }
+    },
+    "/api/bot/auto-recharge/nobility": {
+      "post": { "tags": ["Nobility"], "summary": "Purchase or renew Nobility", "description": "FINANCIAL MUTATION. Requires Idempotency-Key and HAGO_NOBILITY_ENABLED=true. Price, pack, buy type, and buyer UID are refreshed and derived internally. X-Controlled-Mutation is not used. First live financial outcome is pending.", "security": [{ "ApiKeyAuth": [] }], "parameters": [{ "$ref": "#/components/parameters/IdempotencyKey" }], "requestBody": { "$ref": "#/components/requestBodies/NobilityRecharge" }, "responses": { "200": { "$ref": "#/components/responses/Transaction" }, "400": { "$ref": "#/components/responses/Error" }, "401": { "$ref": "#/components/responses/Error" }, "409": { "$ref": "#/components/responses/Error" }, "502": { "$ref": "#/components/responses/Error" }, "503": { "$ref": "#/components/responses/Error" }, "504": { "$ref": "#/components/responses/Error" } } }
+    }
+  },
+  "components": {
+    "securitySchemes": { "ApiKeyAuth": { "type": "apiKey", "in": "header", "name": "x-internal-api-key" } },
+    "parameters": {
+      "IdempotencyKey": { "name": "Idempotency-Key", "in": "header", "required": true, "schema": { "type": "string", "minLength": 8, "maxLength": 128 }, "description": "Stable trusted-backend financial order key." },
+      "ControlledMutation": { "name": "X-Controlled-Mutation", "in": "header", "required": true, "schema": { "type": "string", "enum": ["true"] }, "description": "Explicit controlled Diamond/Crystal request signal." }
+    },
+    "requestBodies": {
+      "SendOtp": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/SendOtpRequest" } } } },
+      "VerifyOtp": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/VerifyOtpRequest" } } } },
+      "AgentPhone": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/AgentPhoneRequest" } } } },
+      "Target": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/TargetRequest" } } } },
+      "TransferReadiness": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/TransferReadinessRequest" } } } },
+      "NobilityReadiness": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/NobilityReadinessRequest" } } } },
+      "NobilityPurchaseReadiness": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/NobilityPurchaseReadinessRequest" } } } },
+      "AccountHistory": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/AccountHistoryRequest" } } } },
+      "DiamondRecharge": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/DiamondRechargeRequest" } } } },
+      "CrystalRecharge": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/CrystalRechargeRequest" } } } },
+      "NobilityPreview": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/NobilityPreviewRequest" } } } },
+      "NobilityRecharge": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/NobilityRechargeRequest" } } } },
+      "Reconcile": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ReconcileRequest" } } } }
+    },
+    "responses": {
+      "Health": { "description": "Process is live", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/HealthResponse" } } } },
+      "Ready": { "description": "Local readiness only; never calls Hago", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ReadyResponse" } } } },
+      "Success": { "description": "Sanitized successful response", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/SuccessResponse" } } } },
+      "Error": { "description": "Sanitized error", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } } } },
+      "SessionValidation": { "description": "Sanitized session state", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/SessionValidationResponse" } } } },
+      "TransferReadiness": { "description": "Sanitized transfer readiness", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/TransferReadinessResponse" } } } },
+      "WalletBalance": { "description": "Normalized supported balances only", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/WalletBalanceResponse" } } } },
+      "AccountHistory": { "description": "Read-only history, not a settlement ledger", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/AccountHistoryResponse" } } } },
+      "Transaction": { "description": "Sanitized local transaction state", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/TransactionResponse" } } } },
+      "TransactionList": { "description": "Sanitized transaction list", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/TransactionListResponse" } } } },
+      "Preview": { "description": "Local structure metadata only", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/PreviewResponse" } } } },
+      "NobilityPurchaseReadiness": { "description": "Sanitized current Nobility eligibility", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/NobilityPurchaseReadinessResponse" } } } }
+    },
+    "schemas": {
+      "HealthResponse": { "type": "object", "required": ["status"], "properties": { "status": { "type": "string", "enum": ["OK"] } } },
+      "ReadyResponse": { "type": "object", "required": ["status"], "properties": { "status": { "type": "string", "enum": ["READY", "NOT_READY"] } } },
+      "SendOtpRequest": { "type": "object", "additionalProperties": false, "required": ["phone", "countryCode"], "properties": { "phone": { "type": "string", "pattern": "^\\+?\\d{8,18}$" }, "countryCode": { "type": "string", "pattern": "^\\d{1,4}$" } } },
+      "VerifyOtpRequest": { "type": "object", "additionalProperties": false, "required": ["phone", "otp", "deviceId"], "properties": { "phone": { "type": "string", "pattern": "^\\+?\\d{8,18}$" }, "otp": { "type": "string", "pattern": "^\\d{4,8}$", "writeOnly": true }, "deviceId": { "type": "string", "minLength": 1, "writeOnly": true }, "country": { "type": "string", "pattern": "^[A-Z]{2}$" }, "language": { "type": "string", "pattern": "^[a-z]{2,10}(?:-[A-Za-z0-9]+)?$" } } },
+      "AgentPhoneRequest": { "type": "object", "additionalProperties": false, "required": ["agentPhone"], "properties": { "agentPhone": { "type": "string", "minLength": 1 } } },
+      "TargetRequest": { "type": "object", "additionalProperties": false, "required": ["agentPhone", "targetId"], "properties": { "agentPhone": { "type": "string", "minLength": 1 }, "targetId": { "type": "string", "minLength": 1 } } },
+      "TransferReadinessRequest": { "$ref": "#/components/schemas/AgentPhoneRequest" },
+      "NobilityReadinessRequest": { "$ref": "#/components/schemas/TargetRequest" },
+      "NobilityPurchaseReadinessRequest": { "type": "object", "additionalProperties": false, "required": ["agentPhone", "targetId", "nobilityType"], "properties": { "agentPhone": { "type": "string", "minLength": 1 }, "targetId": { "type": "string", "minLength": 1 }, "nobilityType": { "type": "integer", "minimum": 1, "maximum": 4 } } },
+      "AccountHistoryRequest": { "type": "object", "additionalProperties": false, "required": ["agentPhone"], "properties": { "agentPhone": { "type": "string", "minLength": 1 }, "optTypes": { "type": "array", "items": { "type": "integer" }, "maxItems": 20 }, "page": { "type": "integer", "minimum": 1, "maximum": 10000 }, "pagesize": { "type": "integer", "minimum": 1, "maximum": 100 }, "startTime": { "type": "integer", "minimum": 0 }, "endTime": { "type": "integer", "minimum": 0 }, "vid": { "type": "string" }, "currencyTypeList": { "type": "array", "items": { "type": "integer" }, "maxItems": 10 } } },
+      "DiamondRechargeRequest": { "type": "object", "additionalProperties": false, "required": ["agentPhone", "targetId", "amount"], "properties": { "agentPhone": { "type": "string", "minLength": 1 }, "targetId": { "type": "string", "minLength": 1 }, "amount": { "type": "number", "exclusiveMinimum": 0 } } },
+      "CrystalRechargeRequest": { "$ref": "#/components/schemas/DiamondRechargeRequest" },
+      "NobilityPreviewRequest": { "type": "object", "additionalProperties": false, "required": ["agentPhone", "targetId", "nobilityType"], "properties": { "agentPhone": { "type": "string", "minLength": 1 }, "targetId": { "type": "string", "minLength": 1 }, "nobilityType": { "type": "integer", "minimum": 1, "maximum": 4 }, "buyType": { "type": "integer", "enum": [1, 2] } } },
+      "NobilityRechargeRequest": { "type": "object", "additionalProperties": false, "required": ["agentPhone", "targetId", "nobilityType"], "properties": { "agentPhone": { "type": "string", "minLength": 1 }, "targetId": { "type": "string", "minLength": 1 }, "nobilityType": { "type": "integer", "minimum": 1, "maximum": 4 } } },
+      "ReconcileRequest": { "type": "object", "additionalProperties": false, "required": ["agentPhone", "transactionId"], "properties": { "agentPhone": { "type": "string", "minLength": 1 }, "transactionId": { "type": "string", "minLength": 1 }, "optTypes": { "type": "array", "items": { "type": "integer" } }, "page": { "type": "integer", "minimum": 1, "maximum": 10000 }, "pagesize": { "type": "integer", "minimum": 1, "maximum": 100 }, "startTime": { "type": "integer", "minimum": 0 }, "endTime": { "type": "integer", "minimum": 0 }, "vid": { "type": "string" }, "currencyTypeList": { "type": "array", "items": { "type": "integer" } } } },
+      "SuccessResponse": { "type": "object", "required": ["status"], "properties": { "status": { "type": "string", "enum": ["SUCCESS"] }, "message": { "type": "string" } } },
+      "ErrorResponse": { "type": "object", "required": ["status", "message"], "properties": { "status": { "type": "string", "enum": ["ERROR"] }, "message": { "type": "string" }, "code": { "type": "string" } } },
+      "SessionValidationResponse": { "type": "object", "required": ["status", "session"], "properties": { "status": { "type": "string", "enum": ["SUCCESS"] }, "session": { "type": "object", "required": ["status"], "properties": { "status": { "type": "string", "enum": ["VALID", "REJECTED", "UNKNOWN"] } } } } },
+      "TransferReadinessResponse": { "type": "object", "required": ["status", "readiness"], "properties": { "status": { "type": "string", "enum": ["SUCCESS"] }, "readiness": { "type": "object", "properties": { "session": { "type": "string", "enum": ["VALID", "REJECTED", "UNKNOWN"] }, "agencyDiamondCurrency": { "type": ["integer", "null"], "enum": [1805, 1835, null] }, "effectiveTransferCurrency": { "type": ["integer", "null"], "enum": [1805, 1835, null] }, "walletDiamondLegacyAvailable": { "type": "boolean" }, "walletDiamondNewAvailable": { "type": "boolean" }, "walletCrystalAvailable": { "type": "boolean" } } } } },
+      "WalletBalanceResponse": { "type": "object", "required": ["status", "wallet"], "properties": { "status": { "type": "string", "enum": ["SUCCESS"] }, "wallet": { "type": "object", "properties": { "balances": { "type": "object", "properties": { "hagoDiamond": { "type": ["number", "null"] }, "hagoDiamondNew": { "type": ["number", "null"] }, "hagoCrystal": { "type": ["number", "null"] } } } } } } },
+      "AccountHistoryResponse": { "type": "object", "required": ["status", "history"], "properties": { "status": { "type": "string", "enum": ["SUCCESS"] }, "history": { "type": "object" } } },
+      "TransactionResponse": { "type": "object", "required": ["status", "transaction"], "properties": { "status": { "type": "string", "enum": ["SUCCESS", "ERROR"] }, "transaction": { "type": "object", "properties": { "id": { "type": "string" }, "serviceType": { "type": "string", "enum": ["DIAMOND", "CRYSTAL", "NOBILITY"] }, "nobilityType": { "type": ["string", "null"] }, "amount": { "type": ["number", "null"] }, "status": { "type": "string", "enum": ["PENDING", "SUCCESS", "FAILED", "UNKNOWN"] }, "upstreamStatus": { "type": "string", "enum": ["NOT_SENT", "SEND_PENDING", "SUCCESS", "FAILED", "UNKNOWN"] }, "upstreamCode": { "type": ["integer", "null"] }, "upstreamTimeout": { "type": "boolean" }, "createdAt": { "type": "string", "format": "date-time" } } } } },
+      "TransactionListResponse": { "type": "object", "required": ["status", "transactions"], "properties": { "status": { "type": "string", "enum": ["SUCCESS"] }, "transactions": { "type": "array", "items": { "type": "object" } } } },
+      "NobilityPurchaseReadinessResponse": { "type": "object", "required": ["status", "nobilityPurchaseReadiness"], "properties": { "status": { "type": "string", "enum": ["SUCCESS"] }, "nobilityPurchaseReadiness": { "type": "object", "properties": { "selectedType": { "type": "integer", "minimum": 1, "maximum": 4 }, "selectedName": { "type": ["string", "null"] }, "derivedBuyType": { "type": ["integer", "null"], "enum": [1, 2, null] }, "derivedBuyTypeName": { "type": ["string", "null"] }, "diamondCost": { "type": ["number", "null"] }, "packAvailable": { "type": ["boolean", "null"] }, "wallet": { "type": "object", "properties": { "available": { "type": ["number", "null"] }, "sufficient": { "type": ["boolean", "null"] } } }, "lowerTierBlocked": { "type": "boolean" }, "confirmationRequired": { "type": "boolean" }, "technicallyEligible": { "type": "boolean" }, "blockReason": { "type": ["string", "null"] } } } } },
+      "PreviewResponse": { "type": "object", "properties": { "serviceType": { "type": "string" }, "amountType": { "type": "string" }, "currencyType": { "type": ["integer", "null"] }, "currencyTypeType": { "type": "string" }, "useGoldCurrency": { "type": "boolean" }, "multipartFieldNames": { "type": "array", "items": { "type": "string" } }, "dataPropertyNames": { "type": "array", "items": { "type": "string" } } } }
+    }
+  }
+}

@@ -1,0 +1,19 @@
+{
+  "name": "hago-automation-bot",
+  "version": "1.0.0",
+  "description": "Backend-only Hago integration adapter",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "test": "node test/hago.test.js",
+    "validate:openapi": "node test/validateOpenapi.js"
+  },
+  "dependencies": {
+    "axios": "^1.7.2",
+    "dotenv": "^16.4.5",
+    "express": "^4.19.2",
+    "mongoose": "^8.4.1",
+    "puppeteer": "^25.5.0",
+    "swagger-ui-express": "^5.0.1"
+  }
+}
