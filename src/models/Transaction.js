@@ -56,7 +56,7 @@ TransactionSchema.index({ agentPhone: 1, createdAt: -1 });
 // matches legacy records where clientId is absent, while V2 ObjectId values
 // are isolated by the separate tenant index below.
 TransactionSchema.index({ clientId: 1, idempotencyKey: 1 }, { unique: true, partialFilterExpression: { clientId: null, idempotencyKey: { $exists: true } }, name: "legacy_idempotency_key_unique" });
-TransactionSchema.index({ clientId: 1, idempotencyKey: 1 }, { unique: true, partialFilterExpression: { clientId: { $exists: true }, idempotencyKey: { $exists: true } } });
+TransactionSchema.index({ clientId: 1, idempotencyKey: 1 }, { unique: true, partialFilterExpression: { clientId: { $exists: true }, idempotencyKey: { $exists: true } }, name: "client_idempotency_key_unique" });
 TransactionSchema.index({ clientId: 1, connectionId: 1, createdAt: -1 });
 
 module.exports = mongoose.model("Transaction", TransactionSchema);

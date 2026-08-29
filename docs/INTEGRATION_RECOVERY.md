@@ -14,6 +14,8 @@ Client authentication is a separate platform concern: `Client` and `ClientApiKey
 
 Existing `/api` routes remain legacy V1 compatibility behavior behind `x-internal-api-key`. V2 remains strictly separate behind `x-client-api-key`: connections, V2 transaction lookups, idempotency, and reconciliation use `req.auth.clientId` plus opaque `connectionId`. Financial V2 sends acquire a Mongo-backed lock keyed by a keyed digest of the authenticated Hago account. Ambiguous results retain `UNKNOWN_HOLD` and are never retried automatically. Legacy V1 records remain outside V2 until an explicit data migration; no Hago protocol behavior changed.
 
+Production V2 enablement remains an operator-controlled deployment step. The transaction index migration is dry-run by default, must be performed during a short maintenance window, and never assigns a legacy V1 record to a tenant. See [Multi-tenant deployment](MULTI_TENANT_DEPLOYMENT.md).
+
 ## Protocol confidence
 
 | Component | Status | Implemented behavior |

@@ -1,6 +1,6 @@
 # Database Reference (historical audit)
 
-> This file describes the pre-recovery schemas. Current additions are `User.hagoSession`, session status/validation fields, and transaction idempotency/upstream state; see [Integration Recovery](INTEGRATION_RECOVERY.md).
+> This file describes the pre-recovery schemas. Current additions are `User.hagoSession`, session status/validation fields, transaction idempotency/upstream state, and tenant-owned V2 collections; see [Integration Recovery](INTEGRATION_RECOVERY.md) and the [multi-tenant deployment runbook](MULTI_TENANT_DEPLOYMENT.md). It is historical evidence, not the current schema reference.
 
 The application connects with `mongoose.connect(process.env.MONGO_URI)` and declares two Mongoose models. Neither schema enables Mongoose `timestamps`; each instead defines a one-time `createdAt` default. No custom collection names, middleware, virtuals, static methods, relations, or indexes beyond `User.phone` uniqueness are declared.
 

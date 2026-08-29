@@ -52,6 +52,7 @@ const { releaseUpstreamAccountLock, holdUnknownUpstreamAccount } = require("../s
 const { consumeRateLimit } = require("../src/services/mongoRateLimit");
 const { MongoMemoryServer } = require("mongodb-memory-server");
 const { run: runClientAdmin } = require("../scripts/clientAdmin");
+const { inspectPrompt3Indexes, runPrompt3IndexMigration } = require("../src/services/prompt3IndexMigration");
 
 const uuid = "123e4567-e89b-42d3-a456-426614174000";
 const sessionA = { hagoUid: "42", country: "EG", language: "en", cookies: { hagouid: "a", uaasCookie: "one" } };
@@ -1777,6 +1778,7 @@ test("V2 transaction schema scopes idempotency per client while retaining isolat
   const indexes = Transaction.schema.indexes();
   const tenant = indexes.find(([key, options]) => key.clientId === 1 && key.idempotencyKey === 1 && options.name !== "legacy_idempotency_key_unique");
   const legacy = indexes.find(([key, options]) => key.clientId === 1 && key.idempotencyKey === 1 && options.name === "legacy_idempotency_key_unique");
+  assert.equal(tenant[1].name, "client_idempotency_key_unique");
   assert.deepEqual(tenant[1].partialFilterExpression, { clientId: { $exists: true }, idempotencyKey: { $exists: true } });
   assert.deepEqual(legacy[1].partialFilterExpression, { clientId: null, idempotencyKey: { $exists: true } });
 });
@@ -1988,4 +1990,57 @@ test("operator UNKNOWN_HOLD release requires confirmation and matches only the o
     await runClientAdmin(["release-unknown-hold", "--transaction", transactionId, "--confirm"]);
     assert.deepEqual(filter, { ownerTransactionId: transactionId, state: "UNKNOWN_HOLD" });
   } finally { UpstreamAccountLock.deleteOne = originalDelete; console.log = originalLog; }
+});
+
+test("Prompt 3 index migration rehearses dry-run, apply, partial state, missing legacy index, and duplicate safety locally", async () => {
+  const server = await MongoMemoryServer.create({ binary: { version: "8.2.6" } });
+  await mongoose.connect(server.getUri());
+  try {
+    const db = mongoose.connection.db;
+    const collection = db.collection("prompt3_migration_rehearsal");
+    const clientA = new mongoose.Types.ObjectId(); const clientB = new mongoose.Types.ObjectId();
+    await collection.createIndex({ createdAt: 1 }, { name: "unrelated_created_at" });
+    await collection.createIndex({ idempotencyKey: 1 }, { name: "idempotencyKey_1", unique: true });
+    const fixtures = [
+      { marker: "legacy", idempotencyKey: "legacy-order-001", createdAt: new Date("2026-01-01") },
+      { marker: "client-a", clientId: clientA, idempotencyKey: "order_123", createdAt: new Date("2026-01-02") },
+    ];
+    await collection.insertMany(fixtures);
+    const before = await collection.find({}).sort({ marker: 1 }).toArray();
+    const dryRun = await runPrompt3IndexMigration({ collection });
+    assert.equal(dryRun.dryRun, true); assert.equal(dryRun.historicalGlobalIndex, "idempotencyKey_1");
+    assert.deepEqual(dryRun.createIndexes.sort(), ["client_idempotency_key_unique", "legacy_idempotency_key_unique"]);
+    assert.ok((await collection.indexes()).some((index) => index.name === "idempotencyKey_1"), "dry run changes no index");
+
+    const applied = await runPrompt3IndexMigration({ collection, apply: true });
+    assert.equal(applied.migrated, true);
+    const state = await inspectPrompt3Indexes(collection);
+    assert.equal(state.historical.length, 0);
+    assert.deepEqual(state.targets.map((target) => target.state), ["READY", "READY"]);
+    assert.ok((await collection.indexes()).some((index) => index.name === "unrelated_created_at"), "unrelated index remains untouched");
+    const after = await collection.find({ marker: { $in: ["legacy", "client-a"] } }).sort({ marker: 1 }).toArray();
+    assert.deepEqual(after.map(({ _id, ...doc }) => doc), before.map(({ _id, ...doc }) => doc), "migration never mutates transaction documents");
+    await collection.insertOne({ marker: "client-b", clientId: clientB, idempotencyKey: "order_123" });
+    await assert.rejects(() => collection.insertOne({ marker: "client-a-duplicate", clientId: clientA, idempotencyKey: "order_123" }), { code: 11000 });
+    await assert.rejects(() => collection.insertOne({ marker: "legacy-duplicate", idempotencyKey: "legacy-order-001" }), { code: 11000 });
+    const rerun = await runPrompt3IndexMigration({ collection, apply: true });
+    assert.equal(rerun.migrated, false, "target state is idempotent");
+
+    const partial = db.collection("prompt3_migration_partial");
+    await partial.insertOne({ marker: "legacy", idempotencyKey: "partial-legacy" });
+    await partial.createIndex({ clientId: 1, idempotencyKey: 1 }, { name: "legacy_idempotency_key_unique", unique: true, partialFilterExpression: { clientId: null, idempotencyKey: { $exists: true } } });
+    const partialApply = await runPrompt3IndexMigration({ collection: partial, apply: true });
+    assert.deepEqual(partialApply.createIndexes, ["client_idempotency_key_unique"]);
+
+    const noHistorical = db.collection("prompt3_migration_no_historical");
+    await noHistorical.insertOne({ marker: "client-a", clientId: clientA, idempotencyKey: "missing-legacy" });
+    const noHistoricalApply = await runPrompt3IndexMigration({ collection: noHistorical, apply: true });
+    assert.equal(noHistoricalApply.historicalGlobalIndex, null);
+    assert.deepEqual((await inspectPrompt3Indexes(noHistorical)).targets.map((target) => target.state), ["READY", "READY"]);
+
+    const duplicates = db.collection("prompt3_migration_duplicates");
+    await duplicates.insertMany([{ idempotencyKey: "duplicate-legacy" }, { idempotencyKey: "duplicate-legacy" }]);
+    await assert.rejects(() => runPrompt3IndexMigration({ collection: duplicates }), /Duplicate idempotency records/);
+    assert.deepEqual((await duplicates.indexes()).map((index) => index.name), ["_id_"], "duplicate preflight changes no index");
+  } finally { await mongoose.disconnect(); await server.stop(); }
 });

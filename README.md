@@ -38,6 +38,8 @@ MongoDB ← User session records and local transaction attempts
 
 The adapter supports a tenant-scoped V2 API: `Client`, `ClientApiKey`, durable `LoginChallenge`, and encrypted `Connection` records. A V2 website/backend authenticates only with `x-client-api-key`, creates a challenge, verifies its OTP, then performs operations through an opaque `connectionId`. Tenant-owned connections and V2 transactions are always queried with the authenticated `req.auth.clientId`; caller-supplied client IDs are never accepted. Legacy V1 resources and `/api/*` routes remain isolated behind `x-internal-api-key` for compatibility.
 
+V2 production rollout requires an explicit transaction-index migration before V2 financial traffic is enabled. See the operator-only [multi-tenant deployment runbook](docs/MULTI_TENANT_DEPLOYMENT.md); it preserves legacy V1 records as V1-only and never infers tenant ownership.
+
 `x-internal-api-key` remains a V1 compatibility credential only. It is not interchangeable with `x-client-api-key`. Client API keys are for website/backends, never browser code, and their plaintext value is shown only once at creation. V2 challenges store encrypted phone material and a keyed device binding; OTP, raw deviceId, and Hago session derivation material are never persisted.
 
 ## Authentication layers
