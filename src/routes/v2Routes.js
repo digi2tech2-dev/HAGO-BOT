@@ -22,7 +22,6 @@ router.post("/connections/:connectionId/previews/nobility", connection, controll
 router.post("/connections/:connectionId/auto-recharge/diamond", connection, controller.rechargeDiamond);
 router.post("/connections/:connectionId/auto-recharge/crystal", connection, controller.rechargeCrystal);
 router.post("/connections/:connectionId/auto-recharge/nobility", connection, controller.buyNobility);
-router.post("/connections/:connectionId/transactions/intent-proof", connection, controller.intentProof);
 router.post("/connections/:connectionId/transactions", connection, controller.transactions);
 router.post("/connections/:connectionId/transactions/reconcile", connection, controller.reconcile);
 

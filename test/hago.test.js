@@ -2038,43 +2038,6 @@ test("real Mongo V2 transaction controllers isolate tenant records and hide lega
   } finally { hagoService.reconcileMutationReadOnly = originalReconcile; await mongoose.disconnect(); await server.stop(); }
 });
 
-test("V2 intent proof is exact, read-only, and does not expose its idempotency key", async () => {
-  const originalFindOne = Transaction.findOne;
-  const clientId = new mongoose.Types.ObjectId();
-  const connectionId = "con_1234567890123456789012";
-  const idempotencyKey = "hago:nobility:0123456789abcdef";
-  const queries = [];
-  const response = () => ({ statusCode: 200, body: null, status(code) { this.statusCode = code; return this; }, json(body) { this.body = body; return body; } });
-  try {
-    Transaction.findOne = (query) => {
-      queries.push(query);
-      return { select: () => ({ lean: async () => null }) };
-    };
-    const absent = response();
-    await v2Controller.intentProof({
-      auth: { clientId }, connection: { connectionId },
-      get: (name) => name === "Idempotency-Key" ? idempotencyKey : undefined,
-    }, absent, assert.fail);
-    assert.deepEqual(absent.body, { status: "SUCCESS", exists: false, hasProviderTransactionRef: false });
-    assert.deepEqual(queries, [{ clientId, connectionId, idempotencyKey }]);
-    assert.equal(JSON.stringify(absent.body).includes(idempotencyKey), false);
-
-    Transaction.findOne = () => ({ select: () => ({ lean: async () => ({ referenceId: "provider-reference" }) }) });
-    const existing = response();
-    await v2Controller.intentProof({
-      auth: { clientId }, connection: { connectionId },
-      get: (name) => name === "Idempotency-Key" ? idempotencyKey : undefined,
-    }, existing, assert.fail);
-    assert.deepEqual(existing.body, { status: "SUCCESS", exists: true, hasProviderTransactionRef: true });
-
-    const invalid = response();
-    await v2Controller.intentProof({ auth: { clientId }, connection: { connectionId }, get: () => "bad" }, invalid, assert.fail);
-    assert.equal(invalid.statusCode, 400);
-  } finally {
-    Transaction.findOne = originalFindOne;
-  }
-});
-
 test("operator UNKNOWN_HOLD release requires confirmation and matches only the owner transaction", async () => {
   const originalDelete = UpstreamAccountLock.deleteOne;
   const originalLog = console.log;
