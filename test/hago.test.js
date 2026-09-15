@@ -1955,6 +1955,63 @@ test("mocked V2 financial orchestration sends once, releases deterministic outco
   }
 });
 
+test("V2 Nobility persists its numeric request type as the schema's canonical name before one prepared send", async () => {
+  const server = await MongoMemoryServer.create({ binary: { version: "8.2.6" } });
+  const priorEnv = { ...process.env };
+  const originalPrepare = hagoService.prepareNobilityPurchase;
+  const originalSend = hagoService.sendNobilityPurchase;
+  await mongoose.connect(server.getUri());
+  const response = () => { const state = {}; return { status(code) { state.code = code; return this; }, json(body) { state.body = body; return state; }, state }; };
+  const clientId = new mongoose.Types.ObjectId();
+  const connection = { connectionId: "con_1234567890123456789012", upstreamAccountDigest: "a".repeat(64) };
+  const request = (key = "nobility-v2-001", body = { targetId: "synthetic-target", nobilityType: 1 }) => ({
+    auth: { clientId }, connection, body,
+    get(name) { return name === "Idempotency-Key" ? key : undefined; },
+  });
+  try {
+    Object.assign(process.env, { ...validEnv, HAGO_NOBILITY_ENABLED: "true" });
+    await Promise.all([Transaction.syncIndexes(), UpstreamAccountLock.syncIndexes()]);
+    await Promise.all([Transaction.deleteMany({}), UpstreamAccountLock.deleteMany({})]);
+    hagoService.prepareNobilityPurchase = async (_connection, input) => {
+      assert.deepEqual(input, { targetId: "synthetic-target", nobilityType: 1 });
+      return { ok: true, request: { noble_type: 1, buy_type: 2, buyer_uid: "safe-uid", diamond: 10, turnover_pack_id: "config-pack", app_name: "hago" } };
+    };
+    let sends = 0;
+    hagoService.sendNobilityPurchase = async (_connection, prepared) => {
+      sends += 1;
+      assert.equal(prepared.buy_type, 2, "the server-derived RENEW request remains unchanged");
+      return { outcome: "SUCCESS", upstreamCode: null };
+    };
+
+    const valid = response();
+    await v2Controller.buyNobility(request(), valid, assert.fail);
+    assert.equal(valid.state.code, 200);
+    const stored = await Transaction.findOne({ idempotencyKey: "nobility-v2-001" });
+    assert.equal(stored.nobilityType, "Knight");
+    assert.equal(stored.idempotencyKey, "nobility-v2-001");
+    assert.equal(sends, 1);
+
+    const replay = response();
+    await v2Controller.buyNobility(request(), replay, assert.fail);
+    assert.equal(replay.state.code, 200);
+    assert.equal(sends, 1, "an idempotent replay never sends again");
+
+    const invalid = response();
+    await v2Controller.buyNobility(request("nobility-v2-invalid", { targetId: "synthetic-target", nobilityType: "1" }), invalid, assert.fail);
+    assert.equal(invalid.state.code, 400);
+    assert.equal(sends, 1, "invalid input never reaches the sender");
+
+    const missingTarget = response();
+    await v2Controller.buyNobility(request("nobility-v2-missing", { nobilityType: 1 }), missingTarget, assert.fail);
+    assert.equal(missingTarget.state.code, 400);
+    assert.equal(sends, 1, "missing input never reaches the sender");
+  } finally {
+    hagoService.prepareNobilityPurchase = originalPrepare;
+    hagoService.sendNobilityPurchase = originalSend;
+    await mongoose.disconnect(); await server.stop(); process.env = priorEnv;
+  }
+});
+
 test("real Mongo V2 transaction controllers isolate tenant records and hide legacy records", async () => {
   const server = await MongoMemoryServer.create({ binary: { version: "8.2.6" } });
   const originalReconcile = hagoService.reconcileMutationReadOnly;
