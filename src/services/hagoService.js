@@ -102,7 +102,10 @@ async function prepareNobilityPurchase(user, input) {
 }
 
 async function sendNobilityPurchase(user, request, guard) {
-  return withSession(user, (session) => hago.nobilityMutation.sendPreparedPurchase(session, request, guard));
+  const resolved = resolveSession(user);
+  return resolved.ok
+    ? hago.nobilityMutation.sendPreparedPurchase(resolved.session, request, guard)
+    : { outcome: "BLOCKED", attempted: false, upstreamCode: null, timeout: false };
 }
 
 module.exports = {

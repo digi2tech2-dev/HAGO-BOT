@@ -6,9 +6,10 @@ const {
   decideNoblePurchase,
   selectNoblePurchase,
   buildBuyNobleByAgencyPayload,
+  normalizeNobleCode,
   normalizeNobleResponse,
 } = require("./nobility");
-const { NOBLE_YMICRO_URL, NOBLE_YMICRO_RUNTIME, buildNobleYmicroMetadata, normalizeNobleUid } = require("./nobilityClient");
+const { NOBLE_YMICRO_URL, NOBLE_YMICRO_RUNTIME, buildNobleYmicroMetadata, isRejectedYmicroResponse, normalizeNobleUid } = require("./nobilityClient");
 const { isNobilityEnabled } = require("../../config/runtime");
 
 function isNobilitySenderEnabled({ idempotencyKey, env = process.env } = {}) {
@@ -22,6 +23,12 @@ function legacyDiamondBalance(wallet) {
 
 function normalizeNobilityOutcome(payload) {
   if (!payload || typeof payload !== "object" || Array.isArray(payload)) return { outcome: "UNKNOWN", upstreamCode: null };
+  if (isRejectedYmicroResponse(payload)) {
+    const upstreamCode = normalizeNobleCode(payload.result.errcode);
+    return [30201, 30500].includes(upstreamCode)
+      ? { outcome: "REJECTED", upstreamCode, knownError: "YmicroRpcError" }
+      : { outcome: "UNKNOWN", upstreamCode };
+  }
   const normalized = normalizeNobleResponse(payload);
   if (normalized.outcome === "SUCCESS") return { outcome: "SUCCESS", upstreamCode: null };
   if (normalized.outcome === "REJECTED") return { outcome: "REJECTED", upstreamCode: normalized.code ?? null, knownError: normalized.kind ?? null };
@@ -89,18 +96,24 @@ function createNobilityMutationClient({ http, uaas, ymicro, nobility, turnover, 
 
     async sendPreparedPurchase(session, request, guard) {
       if (!isNobilitySenderEnabled(guard)) return { outcome: "BLOCKED", attempted: false, upstreamCode: null };
-      const cookie = buildCookieHeader(session);
-      const metadata = buildNobleYmicroMetadata(session, `${NOBLE_RPC.service}.${NOBLE_RPC.purchaseMethod}`, now(), runtime);
-      if (!cookie || !metadata) return { outcome: "UNKNOWN", upstreamCode: null, timeout: false };
+      let cookie; let metadata; let payload;
+      try {
+        cookie = buildCookieHeader(session);
+        metadata = buildNobleYmicroMetadata(session, `${NOBLE_RPC.service}.${NOBLE_RPC.purchaseMethod}`, now(), runtime);
+        if (!cookie || !metadata) return { outcome: "BLOCKED", attempted: false, upstreamCode: null, timeout: false };
+        payload = JSON.stringify({ sequence: Number(metadata.sequence), ...request });
+      } catch {
+        return { outcome: "BLOCKED", attempted: false, upstreamCode: null, timeout: false };
+      }
       try {
         const response = await http.post(
           NOBLE_YMICRO_URL,
-          JSON.stringify({ sequence: Number(metadata.sequence), ...request }),
+          payload,
           { params: metadata.params, headers: { Cookie: cookie, "Content-Type": "text/plain" } },
         );
-        return normalizeNobilityOutcome(response?.data);
+        return { ...normalizeNobilityOutcome(response?.data), attempted: true };
       } catch (error) {
-        return outcomeFromError(error);
+        return { ...outcomeFromError(error), attempted: true };
       }
     },
   };

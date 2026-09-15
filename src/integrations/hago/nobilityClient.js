@@ -167,6 +167,7 @@ module.exports = {
   NOBLE_YMICRO_URL,
   NOBLE_YMICRO_RUNTIME,
   buildNobleYmicroMetadata,
+  isRejectedYmicroResponse,
   withReadOnlyStage,
   normalizeNobleUid,
   normalizeNobilityReadiness,

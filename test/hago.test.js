@@ -22,7 +22,7 @@ const { buildTransferAccountRequest, parseTransferAccountResponse } = require(".
 const { buildSeqId, selectDiamondTransferCurrency, isControlledMutationSenderEnabled, createFinancialMutationClient } = require("../src/integrations/hago/financial");
 const { buildDiamondMutationPreview, buildCrystalMutationPreview, buildNobilityMutationPreview } = require("../src/integrations/hago/mutationPreview");
 const { normalizedCrystalBalance, validateCrystalTransferPreflight } = require("../src/integrations/hago/crystalPreflight");
-const { NOBLE_RPC, NOBLE_TYPES, BUY_TYPES, NOBLE_STATUSES, buildListAllNobleConfRequest, buildGetUserNobleRequest, buildGetUserGPSubStatusRequest, parseNobleConfig, parseCurrentNoble, decideNoblePurchase, selectNoblePurchase, buildBuyNobleByAgencyPayload, normalizeNobleResponse } = require("../src/integrations/hago/nobility");
+const { NOBLE_RPC, NOBLE_TYPES, BUY_TYPES, NOBLE_STATUSES, buildListAllNobleConfRequest, buildGetUserNobleRequest, buildGetUserGPSubStatusRequest, parseNobleConfig, parseCurrentNoble, decideNoblePurchase, selectNoblePurchase, buildBuyNobleByAgencyPayload, normalizeNobleCode, normalizeNobleResponse } = require("../src/integrations/hago/nobility");
 const { createTransferReadinessClient, parseAgencyReadiness, parsePermissionReadiness, parsePasswordReadiness, parseWalletReadiness } = require("../src/integrations/hago/transferReadiness");
 const internalAuth = require("../src/middleware/internalAuth");
 const { createHagoHttpClient, normalizeHttpError } = require("../src/integrations/hago/client");
@@ -1028,6 +1028,7 @@ test("Nobility enums, config selection, UI decisions, and logical payload are so
   assert.deepEqual(normalizeNobleResponse({ code: 30500 }), { outcome: "REJECTED", code: 30500, kind: "BssDiamondNotEnough" });
   assert.deepEqual(normalizeNobleResponse({ code: 30201 }), { outcome: "REJECTED", code: 30201, kind: "BssRenewTimesOverLimit" });
   assert.deepEqual(normalizeNobleResponse({ is_ok: false }), { outcome: "UNKNOWN", code: null, kind: null });
+  assert.deepEqual(normalizeNobleResponse({ code: null }), { outcome: "UNKNOWN", code: null, kind: null });
 
   const successTransaction = {};
   assert.deepEqual(botController._test.applyControlledOutcome(successTransaction, normalizeNobilityOutcome({ is_ok: true })), { status: 200, bodyStatus: "SUCCESS" });
@@ -1041,6 +1042,17 @@ test("Nobility enums, config selection, UI decisions, and logical payload are so
     const unknownTransaction = {};
     assert.deepEqual(botController._test.applyControlledOutcome(unknownTransaction, normalizeNobilityOutcome(payload)), { status: 502, bodyStatus: "ERROR", code: "MUTATION_OUTCOME_UNKNOWN" });
     assert.equal(unknownTransaction.status, "UNKNOWN");
+  }
+});
+
+test("Nobility upstream code normalization accepts only strict decimal integers", () => {
+  const cases = [
+    [null, null], [undefined, null], ["", null], ["   ", null], ["0x10", null], ["1.5", null],
+    ["0", 0], [0, 0], ["30500", 30500], [30500, 30500], [-1, -1], ["-1", -1],
+  ];
+  for (const [input, expected] of cases) {
+    assert.equal(normalizeNobleCode(input), expected);
+    assert.equal(v2Controller._test.normalizedUpstreamCode(input), expected);
   }
 });
 
@@ -1108,10 +1120,15 @@ test("Nobility sender uses only the production switch and idempotency key, and n
     http: { post: async () => { calls += 1; throw Object.assign(new Error("timeout"), { code: "ECONNABORTED" }); } },
     uaas: {}, ymicro: {}, nobility: {}, turnover: {},
   });
-  assert.deepEqual(await client.sendPreparedPurchase(sessionA, request, { idempotencyKey: "nobility-timeout-key", env: { HAGO_NOBILITY_ENABLED: "true" } }), { outcome: "UNKNOWN", upstreamCode: null, timeout: true });
+  assert.deepEqual(await client.sendPreparedPurchase(sessionA, request, { idempotencyKey: "nobility-timeout-key", env: { HAGO_NOBILITY_ENABLED: "true" } }), { outcome: "UNKNOWN", upstreamCode: null, timeout: true, attempted: true });
   assert.equal(calls, 1);
-  const known = createNobilityMutationClient({ http: { post: async () => ({ data: { code: 30500 } }) }, uaas: {}, ymicro: {}, nobility: {}, turnover: {} });
-  assert.equal((await known.sendPreparedPurchase(sessionA, request, { idempotencyKey: "nobility-known-key", env: { HAGO_NOBILITY_ENABLED: "true" } })).outcome, "REJECTED");
+  const rpcOutcome = async (errcode) => createNobilityMutationClient({ http: { post: async () => ({ data: { result: { errcode } } }) }, uaas: {}, ymicro: {}, nobility: {}, turnover: {} })
+    .sendPreparedPurchase(sessionA, request, { idempotencyKey: `nobility-rpc-${errcode}-key`, env: { HAGO_NOBILITY_ENABLED: "true" } });
+  assert.deepEqual(await rpcOutcome(30201), { outcome: "REJECTED", upstreamCode: 30201, knownError: "YmicroRpcError", attempted: true });
+  assert.deepEqual(await rpcOutcome("30500"), { outcome: "REJECTED", upstreamCode: 30500, knownError: "YmicroRpcError", attempted: true });
+  assert.deepEqual(await rpcOutcome(39999), { outcome: "UNKNOWN", upstreamCode: 39999, attempted: true });
+  const success = createNobilityMutationClient({ http: { post: async () => ({ data: { is_ok: true } }) }, uaas: {}, ymicro: {}, nobility: {}, turnover: {} });
+  assert.deepEqual(await success.sendPreparedPurchase(sessionA, request, { idempotencyKey: "nobility-success-key", env: { HAGO_NOBILITY_ENABLED: "true" } }), { outcome: "SUCCESS", upstreamCode: null, attempted: true });
   const unknown = createNobilityMutationClient({ http: { post: async () => ({ data: { code: 999 } }) }, uaas: {}, ymicro: {}, nobility: {}, turnover: {} });
   assert.equal((await unknown.sendPreparedPurchase(sessionA, request, { idempotencyKey: "nobility-unknown-key", env: { HAGO_NOBILITY_ENABLED: "true" } })).outcome, "UNKNOWN");
   const malformed = createNobilityMutationClient({ http: { post: async () => ({ data: "invalid" }) }, uaas: {}, ymicro: {}, nobility: {}, turnover: {} });
@@ -1119,8 +1136,21 @@ test("Nobility sender uses only the production switch and idempotency key, and n
   const disabledClient = createNobilityMutationClient({ http: { post: async () => assert.fail("disabled Nobility must not send") }, uaas: {}, ymicro: {}, nobility: {}, turnover: {} });
   const disabled = await disabledClient.sendPreparedPurchase(sessionA, request, { idempotencyKey: "nobility-disabled-key", env: {} });
   assert.deepEqual(disabled, { outcome: "BLOCKED", attempted: false, upstreamCode: null });
+  let preHttpCalls = 0;
+  const preHttp = createNobilityMutationClient({ http: { post: async () => { preHttpCalls += 1; assert.fail("local pre-send failure must not call Hago"); } }, uaas: {}, ymicro: {}, nobility: {}, turnover: {} });
+  const enabledGuard = { idempotencyKey: "nobility-pre-http-key", env: { HAGO_NOBILITY_ENABLED: "true" } };
+  assert.deepEqual(await preHttp.sendPreparedPurchase({ hagoUid: "42", cookies: { hagouid: "a" } }, request, enabledGuard), { outcome: "BLOCKED", attempted: false, upstreamCode: null, timeout: false });
+  assert.deepEqual(await preHttp.sendPreparedPurchase({ cookies: { hagouid: "a", uaasCookie: "one" } }, request, enabledGuard), { outcome: "BLOCKED", attempted: false, upstreamCode: null, timeout: false });
+  const circular = { ...request }; circular.self = circular;
+  assert.deepEqual(await preHttp.sendPreparedPurchase(sessionA, circular, enabledGuard), { outcome: "BLOCKED", attempted: false, upstreamCode: null, timeout: false });
+  assert.equal(preHttpCalls, 0);
   const network = createNobilityMutationClient({ http: { post: async () => { throw new Error("network"); } }, uaas: {}, ymicro: {}, nobility: {}, turnover: {} });
-  assert.deepEqual(await network.sendPreparedPurchase(sessionA, request, { idempotencyKey: "nobility-network-key", env: { HAGO_NOBILITY_ENABLED: "true" } }), { outcome: "UNKNOWN", upstreamCode: null, timeout: false });
+  assert.deepEqual(await network.sendPreparedPurchase(sessionA, request, { idempotencyKey: "nobility-network-key", env: { HAGO_NOBILITY_ENABLED: "true" } }), { outcome: "UNKNOWN", upstreamCode: null, timeout: false, attempted: true });
+});
+
+test("Nobility service labels an unavailable local session as a non-attempt", async () => {
+  const request = { noble_type: 1, buy_type: 1, buyer_uid: 7, diamond: 10, turnover_pack_id: "pack", app_name: "hago" };
+  assert.deepEqual(await hagoService.sendNobilityPurchase(undefined, request, { idempotencyKey: "nobility-no-session-key", env: { HAGO_NOBILITY_ENABLED: "true" } }), { outcome: "BLOCKED", attempted: false, upstreamCode: null, timeout: false });
 });
 
 test("Nobility route rejects caller-supplied price, pack, and buy type before any local or upstream action", async () => {
@@ -1951,6 +1981,107 @@ test("mocked V2 financial orchestration sends once, releases deterministic outco
     assert.equal(unrelated.state.code, 200); assert.equal(sends, 4, "a distinct upstream account is not blocked");
   } finally {
     hagoService.prepareRechargeMutation = originalPrepareGate; hagoService.prepareControlledRecharge = originalPrepare; hagoService.sendControlledRecharge = originalSend;
+    await mongoose.disconnect(); await server.stop(); process.env = priorEnv;
+  }
+});
+
+test("V2 Nobility persists canonical types, propagates its idempotency key, and distinguishes non-attempts from uncertain sends", async () => {
+  const server = await MongoMemoryServer.create({ binary: { version: "8.2.6" } });
+  const priorEnv = { ...process.env };
+  const originalPrepare = hagoService.prepareNobilityPurchase;
+  const originalSend = hagoService.sendNobilityPurchase;
+  await mongoose.connect(server.getUri());
+  const response = () => { const state = {}; return { status(code) { state.code = code; return this; }, json(body) { state.body = body; return state; }, state }; };
+  const clientId = new mongoose.Types.ObjectId();
+  const connection = { connectionId: "con_1234567890123456789012", upstreamAccountDigest: "a".repeat(64) };
+  const request = (key, nobilityType) => ({
+    auth: { clientId }, connection, body: { targetId: "synthetic-target", nobilityType },
+    get(name) { return name === "Idempotency-Key" ? key : undefined; },
+  });
+  let sends = 0;
+  try {
+    Object.assign(process.env, { ...validEnv, HAGO_NOBILITY_ENABLED: "true" });
+    await Promise.all([Transaction.syncIndexes(), UpstreamAccountLock.syncIndexes()]);
+    await Promise.all([Transaction.deleteMany({}), UpstreamAccountLock.deleteMany({})]);
+    hagoService.prepareNobilityPurchase = async (_connection, input) => ({ ok: true, request: { noble_type: input.nobilityType, buy_type: 2, buyer_uid: "safe-uid", diamond: 10, turnover_pack_id: "config-pack", app_name: "hago" } });
+    hagoService.sendNobilityPurchase = async (_connection, prepared, guard) => {
+      sends += 1;
+      assert.equal(isNobilitySenderEnabled({ ...guard, env: process.env }), true, "the controller supplies the validated idempotency key to the sender guard");
+      if (guard.idempotencyKey === "nobility-v2-not-attempted") return { outcome: "BLOCKED", attempted: false, upstreamCode: null };
+      if (guard.idempotencyKey === "nobility-v2-missing-session") return { outcome: "BLOCKED", attempted: false, upstreamCode: null, timeout: false };
+      if (guard.idempotencyKey === "nobility-v2-unknown") return { outcome: "UNKNOWN", attempted: true, upstreamCode: 39999, timeout: false };
+      return { outcome: "SUCCESS", upstreamCode: ({ 1: null, 2: 0, 3: "30500", 4: 30201 })[prepared.noble_type] };
+    };
+
+    for (const [type, name] of [[1, "Knight"], [2, "Viscount"], [3, "Earl"], [4, "Duke"]]) {
+      const result = response();
+      await v2Controller.buyNobility(request(type === 1 ? "  nobility-v2-type-1  " : `nobility-v2-type-${type}`, type), result, assert.fail);
+      assert.equal(result.state.code, 200);
+      const stored = await Transaction.findOne({ idempotencyKey: `nobility-v2-type-${type}` });
+      assert.equal(stored.nobilityType, name);
+      assert.equal(stored.upstreamCode, ({ 1: null, 2: 0, 3: 30500, 4: 30201 })[type]);
+    }
+    assert.equal(sends, 4);
+
+    const replay = response();
+    await v2Controller.buyNobility(request("nobility-v2-type-1", 1), replay, assert.fail);
+    assert.equal(replay.state.code, 200);
+    assert.equal(sends, 4, "the same key and intent never send a second mutation");
+    const conflict = response();
+    await v2Controller.buyNobility(request("nobility-v2-type-1", 2), conflict, assert.fail);
+    assert.equal(conflict.state.code, 409);
+    assert.equal(conflict.state.body.code, "IDEMPOTENCY_CONFLICT");
+    assert.equal(sends, 4, "a conflicting intent never sends a mutation");
+
+    const notAttempted = response();
+    await v2Controller.buyNobility(request("nobility-v2-not-attempted", 1), notAttempted, assert.fail);
+    assert.equal(notAttempted.state.code, 409);
+    assert.equal(notAttempted.state.body.code, "BLOCKED");
+    assert.notEqual(notAttempted.state.body.code, "MUTATION_OUTCOME_UNKNOWN");
+    const blockedTransaction = await Transaction.findOne({ idempotencyKey: "nobility-v2-not-attempted" });
+    assert.equal(blockedTransaction.status, "FAILED");
+    assert.equal(blockedTransaction.upstreamStatus, "NOT_SENT");
+    assert.equal(blockedTransaction.sendAttempts, 0);
+    assert.equal(blockedTransaction.sendAttemptedAt, null);
+    assert.equal(blockedTransaction.upstreamTimeout, false);
+    assert.equal(blockedTransaction.upstreamCode, null);
+    assert.equal(await UpstreamAccountLock.countDocuments({ upstreamAccountDigest: connection.upstreamAccountDigest }), 0, "a proven non-attempt releases its account lock without an UNKNOWN_HOLD");
+    const blockedReplay = response();
+    await v2Controller.buyNobility(request("nobility-v2-not-attempted", 1), blockedReplay, assert.fail);
+    assert.equal(blockedReplay.state.code, 409);
+    assert.equal(sends, 5, "a proven non-attempt is still idempotent");
+
+    const missingSession = response();
+    await v2Controller.buyNobility(request("nobility-v2-missing-session", 1), missingSession, assert.fail);
+    assert.equal(missingSession.state.code, 409);
+    assert.notEqual(missingSession.state.body.code, "MUTATION_OUTCOME_UNKNOWN");
+    const missingSessionTransaction = await Transaction.findOne({ idempotencyKey: "nobility-v2-missing-session" });
+    assert.equal(missingSessionTransaction.status, "FAILED");
+    assert.equal(missingSessionTransaction.upstreamStatus, "NOT_SENT");
+    assert.equal(missingSessionTransaction.sendAttempts, 0);
+    assert.equal(missingSessionTransaction.sendAttemptedAt, null);
+    assert.equal(missingSessionTransaction.upstreamTimeout, false);
+    assert.equal(missingSessionTransaction.upstreamCode, null);
+    assert.equal(await UpstreamAccountLock.countDocuments({ upstreamAccountDigest: connection.upstreamAccountDigest }), 0, "a missing local session cannot create an UNKNOWN_HOLD");
+
+    const unknown = response();
+    await v2Controller.buyNobility(request("nobility-v2-unknown", 1), unknown, assert.fail);
+    assert.equal(unknown.state.code, 502);
+    assert.equal(unknown.state.body.code, "MUTATION_OUTCOME_UNKNOWN");
+    const unknownTransaction = await Transaction.findOne({ idempotencyKey: "nobility-v2-unknown" });
+    assert.equal(unknownTransaction.status, "UNKNOWN");
+    assert.equal(unknownTransaction.upstreamStatus, "UNKNOWN");
+    assert.equal(unknownTransaction.sendAttempts, 1);
+    assert.ok(unknownTransaction.sendAttemptedAt instanceof Date);
+    assert.equal(unknownTransaction.upstreamCode, 39999);
+    assert.equal((await UpstreamAccountLock.findOne({ upstreamAccountDigest: connection.upstreamAccountDigest })).state, "UNKNOWN_HOLD");
+    const unknownReplay = response();
+    await v2Controller.buyNobility(request("nobility-v2-unknown", 1), unknownReplay, assert.fail);
+    assert.equal(unknownReplay.state.code, 502);
+    assert.equal(sends, 7, "an uncertain attempted mutation is never automatically retried");
+  } finally {
+    hagoService.prepareNobilityPurchase = originalPrepare;
+    hagoService.sendNobilityPurchase = originalSend;
     await mongoose.disconnect(); await server.stop(); process.env = priorEnv;
   }
 });

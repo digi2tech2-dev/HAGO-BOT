@@ -8,11 +8,13 @@ const { consumeRateLimit } = require("../services/mongoRateLimit");
 const { acquireUpstreamAccountLock, releaseUpstreamAccountLock, holdUnknownUpstreamAccount } = require("../services/upstreamAccountLock");
 const hagoService = require("../services/hagoService");
 const { buildDiamondMutationPreview, buildCrystalMutationPreview, buildNobilityMutationPreview } = require("../integrations/hago/mutationPreview");
-const { validNobleType } = require("../integrations/hago/nobility");
+const { validNobleType, normalizeNobleCode } = require("../integrations/hago/nobility");
 
 function bodyError(res, message, code = "INVALID_REQUEST") { return res.status(400).json({ status: "ERROR", code, message }); }
 function requireTarget(body) { return typeof body?.targetId === "string" && body.targetId.trim().length > 0 ? body.targetId.trim() : null; }
 function normalizedIdempotency(value) { const key = typeof value === "string" ? value.trim() : ""; return /^[A-Za-z0-9._:-]{8,128}$/.test(key) ? key : null; }
+function nobilityTypeName(type) { return ({ 1: "Knight", 2: "Viscount", 3: "Earl", 4: "Duke" })[validNobleType(type)] || null; }
+function normalizedUpstreamCode(value) { return normalizeNobleCode(value); }
 function readonlyFailure(res, result, fallback) {
   const status = result?.kind === "TIMEOUT" ? 504 : result?.kind === "SESSION_UNAVAILABLE" || result?.kind === "NO_SESSION" ? 409 : 502;
   return res.status(status).json({ status: "ERROR", code: result?.kind || "UPSTREAM_ERROR", message: result?.message || fallback });
@@ -30,6 +32,7 @@ function outcomeFromTransfer(outcome) {
 }
 function outcomeFromNobility(outcome) {
   if (outcome?.outcome === "SUCCESS" || outcome?.is_ok === true) return { state: "SUCCESS", http: 200 };
+  if (outcome?.outcome === "REJECTED") return { state: "FAILED", http: 409 };
   if ([30201, 30500].includes(Number(outcome?.upstreamCode))) return { state: "FAILED", http: 409 };
   return { state: "UNKNOWN", http: outcome?.timeout ? 504 : 502 };
 }
@@ -109,15 +112,17 @@ exports.previewNobility = (req, res) => { const type = req.body?.nobilityType; r
 async function persistV2Intent({ req, serviceType, amount, nobilityType }) {
   const targetId = requireTarget(req.body); const idempotencyKey = normalizedIdempotency(req.get("Idempotency-Key"));
   if (!targetId || !idempotencyKey || (serviceType !== "NOBILITY" && (!Number.isFinite(Number(amount)) || Number(amount) <= 0))) return { error: { message: "targetId, amount where applicable, and a valid Idempotency-Key are required." } };
+  const persistedNobilityType = serviceType === "NOBILITY" ? nobilityTypeName(nobilityType) : null;
+  if (serviceType === "NOBILITY" && !persistedNobilityType) return { error: { message: "A numeric nobilityType is required." } };
   const intent = { connectionId: req.connection.connectionId, targetId, serviceType, amount: serviceType === "NOBILITY" ? 0 : Number(amount), nobilityType: serviceType === "NOBILITY" ? nobilityType : null };
   const intentFingerprint = fingerprint(intent);
   const existing = await Transaction.findOne({ clientId: req.auth.clientId, idempotencyKey });
   if (existing) return { existing, match: sameIntent(existing, intentFingerprint) };
-  try { return { intent, intentFingerprint, transaction: await Transaction.create({ targetId, serviceType, amount: intent.amount, nobilityType, clientId: req.auth.clientId, connectionId: req.connection.connectionId, idempotencyKey, intentFingerprint, status: "PENDING", upstreamStatus: "NOT_SENT", referenceId: null }) }; }
+  try { return { intent, intentFingerprint, idempotencyKey, transaction: await Transaction.create({ targetId, serviceType, amount: intent.amount, nobilityType: persistedNobilityType, clientId: req.auth.clientId, connectionId: req.connection.connectionId, idempotencyKey, intentFingerprint, status: "PENDING", upstreamStatus: "NOT_SENT", referenceId: null }) }; }
   catch (error) { if (error?.code !== 11000) throw error; const concurrent = await Transaction.findOne({ clientId: req.auth.clientId, idempotencyKey }); return { existing: concurrent, match: concurrent && sameIntent(concurrent, intentFingerprint) }; }
 }
 
-function existingResponse(res, existing, match) { if (!match) return res.status(409).json({ status: "ERROR", code: "IDEMPOTENCY_CONFLICT", message: "Idempotency-Key conflicts with an existing intent." }); const status = existing.upstreamStatus === "SUCCESS" ? 200 : existing.upstreamStatus === "SEND_PENDING" ? 202 : existing.upstreamStatus === "FAILED" ? 409 : existing.upstreamStatus === "UNKNOWN" ? 502 : 503; return res.status(status).json({ status: existing.upstreamStatus === "SUCCESS" ? "SUCCESS" : "ERROR", transaction: publicTransaction(existing) }); }
+function existingResponse(res, existing, match) { if (!match) return res.status(409).json({ status: "ERROR", code: "IDEMPOTENCY_CONFLICT", message: "Idempotency-Key conflicts with an existing intent." }); const status = existing.upstreamStatus === "SUCCESS" ? 200 : existing.upstreamStatus === "SEND_PENDING" ? 202 : existing.upstreamStatus === "FAILED" || existing.status === "FAILED" ? 409 : existing.upstreamStatus === "UNKNOWN" ? 502 : 503; return res.status(status).json({ status: existing.upstreamStatus === "SUCCESS" ? "SUCCESS" : "ERROR", transaction: publicTransaction(existing) }); }
 
 async function financialMutation(req, res, serviceType) {
   const nobility = serviceType === "NOBILITY";
@@ -140,9 +145,15 @@ async function financialMutation(req, res, serviceType) {
   const lock = await acquireUpstreamAccountLock({ upstreamAccountDigest: req.connection.upstreamAccountDigest, ownerTransactionId: transaction._id, clientId: req.auth.clientId, connectionId: req.connection.connectionId });
   if (!lock.ok) { transaction.status = "UNKNOWN"; transaction.upstreamStatus = "NOT_SENT"; transaction.errorMessage = lock.kind; await transaction.save(); return res.status(409).json({ status: "ERROR", code: lock.kind, transaction: publicTransaction(transaction) }); }
   transaction.upstreamStatus = "SEND_PENDING"; transaction.sendAttempts = 1; transaction.sendAttemptedAt = new Date(); await transaction.save();
-  const outcome = nobility ? await hagoService.sendNobilityPurchase(req.connection, prepared.request, {}) : await hagoService.sendControlledRecharge(req.connection, prepared.request, { controlledHeader: req.get("X-Controlled-Mutation") });
+  const outcome = nobility ? await hagoService.sendNobilityPurchase(req.connection, prepared.request, { idempotencyKey: persisted.idempotencyKey }) : await hagoService.sendControlledRecharge(req.connection, prepared.request, { controlledHeader: req.get("X-Controlled-Mutation") });
+  if (outcome?.attempted === false) {
+    transaction.status = "FAILED"; transaction.upstreamStatus = "NOT_SENT"; transaction.sendAttempts = 0; transaction.sendAttemptedAt = null; transaction.upstreamTimeout = false; transaction.upstreamCode = null; transaction.referenceId = null; transaction.errorMessage = outcome?.outcome || "NOT_ATTEMPTED";
+    await transaction.save();
+    await releaseUpstreamAccountLock({ upstreamAccountDigest: req.connection.upstreamAccountDigest, ownerTransactionId: transaction._id });
+    return res.status(409).json({ status: "ERROR", code: transaction.errorMessage, transaction: publicTransaction(transaction) });
+  }
   const normalized = nobility ? outcomeFromNobility(outcome) : outcomeFromTransfer(outcome);
-  transaction.status = normalized.state; transaction.upstreamStatus = normalized.state; transaction.upstreamTimeout = Boolean(outcome?.timeout); transaction.upstreamCode = Number.isFinite(Number(outcome?.upstreamCode)) ? Number(outcome.upstreamCode) : null; transaction.referenceId = null;
+  transaction.status = normalized.state; transaction.upstreamStatus = normalized.state; transaction.upstreamTimeout = Boolean(outcome?.timeout); transaction.upstreamCode = normalizedUpstreamCode(outcome?.upstreamCode); transaction.referenceId = null;
   if (normalized.state === "UNKNOWN") await holdUnknownUpstreamAccount({ upstreamAccountDigest: req.connection.upstreamAccountDigest, ownerTransactionId: transaction._id, clientId: req.auth.clientId, connectionId: req.connection.connectionId }); else await releaseUpstreamAccountLock({ upstreamAccountDigest: req.connection.upstreamAccountDigest, ownerTransactionId: transaction._id });
   await transaction.save();
   return res.status(normalized.http).json({ status: normalized.state === "SUCCESS" ? "SUCCESS" : "ERROR", ...(normalized.state === "UNKNOWN" ? { code: "MUTATION_OUTCOME_UNKNOWN", message: "Outcome is uncertain. Do not retry." } : {}), transaction: publicTransaction(transaction) });
@@ -154,4 +165,4 @@ exports.buyNobility = (req, res, next) => financialMutation(req, res, "NOBILITY"
 exports.transactions = async (req, res, next) => { try { const transactions = await Transaction.find({ clientId: req.auth.clientId, connectionId: req.connection.connectionId }).sort({ createdAt: -1 }).limit(100); return res.json({ status: "SUCCESS", transactions: transactions.map(publicTransaction) }); } catch (error) { return next(error); } };
 exports.reconcile = async (req, res, next) => { try { const id = req.body?.transactionId; if (!/^[a-f\d]{24}$/i.test(String(id))) return bodyError(res, "transactionId is required."); const transaction = await Transaction.findOne({ _id: id, clientId: req.auth.clientId, connectionId: req.connection.connectionId }); if (!transaction) return res.status(404).json({ status: "ERROR", code: "TRANSACTION_NOT_FOUND", message: "Transaction was not found." }); const result = await hagoService.reconcileMutationReadOnly(req.connection, req.body?.history || {}); return result.ok ? res.json({ status: "SUCCESS", transaction: publicTransaction(transaction), reconciliation: { status: "MANUAL_REVIEW_REQUIRED", history: result.history } }) : readonlyFailure(res, result, "Unable to reconcile transaction."); } catch (error) { return next(error); } };
 
-module.exports._test = { outcomeFromTransfer, outcomeFromNobility, normalizedIdempotency, fingerprint, publicTransaction };
+module.exports._test = { outcomeFromTransfer, outcomeFromNobility, normalizedIdempotency, normalizedUpstreamCode, nobilityTypeName, fingerprint, publicTransaction };

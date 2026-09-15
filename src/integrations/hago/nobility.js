@@ -123,19 +123,26 @@ function buildBuyNobleByAgencyPayload({ nobleType, buyType, buyerUid, diamond, t
   };
 }
 
+function normalizeNobleCode(value) {
+  if (typeof value === "number") return Number.isFinite(value) && Number.isInteger(value) ? value : null;
+  if (typeof value !== "string" || !/^-?\d+$/.test(value)) return null;
+  const code = Number(value);
+  return Number.isFinite(code) && Number.isInteger(code) ? code : null;
+}
+
 function normalizeNobleResponse(payload) {
   if (payload?.is_ok === true) return { outcome: "SUCCESS", code: null };
-  const code = Number(payload?.code);
+  const code = normalizeNobleCode(payload?.code);
   if (code === 30500) return { outcome: "REJECTED", code, kind: "BssDiamondNotEnough" };
   if (code === 30201) return { outcome: "REJECTED", code, kind: "BssRenewTimesOverLimit" };
   // The bundle gives deterministic handling only for these known codes.
   // Any other response is not enough evidence to declare a financial result.
-  return { outcome: "UNKNOWN", code: Number.isFinite(code) ? code : null, kind: null };
+  return { outcome: "UNKNOWN", code, kind: null };
 }
 
 module.exports = {
   NOBLE_RPC, NOBLE_TYPES, BUY_TYPES, NOBLE_STATUSES, ACTIVE_SUBSCRIPTION_STATUSES, NOBLE_TYPE_BY_NAME,
   validNobleType, buildListAllNobleConfRequest, buildGetUserNobleRequest, buildGetUserGPSubStatusRequest,
   parseNobleConfig, parseCurrentNoble, hasOtherActiveSubscription, decideNoblePurchase,
-  selectNoblePurchase, buildBuyNobleByAgencyPayload, normalizeNobleResponse,
+  selectNoblePurchase, buildBuyNobleByAgencyPayload, normalizeNobleCode, normalizeNobleResponse,
 };
