@@ -154,6 +154,25 @@ async function financialMutation(req, res, serviceType) {
 exports.rechargeDiamond = (req, res, next) => financialMutation(req, res, "DIAMOND").catch(next);
 exports.rechargeCrystal = (req, res, next) => financialMutation(req, res, "CRYSTAL").catch(next);
 exports.buyNobility = (req, res, next) => financialMutation(req, res, "NOBILITY").catch(next);
+// Tenant- and connection-scoped read-only proof for N&A's administrator-only
+// pre-send recovery flow. The idempotency key stays in the request header and
+// is never included in the response.
+exports.intentProof = async (req, res, next) => {
+  try {
+    const idempotencyKey = normalizedIdempotency(req.get("Idempotency-Key"));
+    if (!idempotencyKey) return bodyError(res, "A valid Idempotency-Key is required.");
+    const transaction = await Transaction.findOne({
+      clientId: req.auth.clientId,
+      connectionId: req.connection.connectionId,
+      idempotencyKey,
+    }).select("referenceId").lean();
+    return res.json({
+      status: "SUCCESS",
+      exists: Boolean(transaction),
+      hasProviderTransactionRef: Boolean(transaction?.referenceId),
+    });
+  } catch (error) { return next(error); }
+};
 exports.transactions = async (req, res, next) => { try { const transactions = await Transaction.find({ clientId: req.auth.clientId, connectionId: req.connection.connectionId }).sort({ createdAt: -1 }).limit(100); return res.json({ status: "SUCCESS", transactions: transactions.map(publicTransaction) }); } catch (error) { return next(error); } };
 exports.reconcile = async (req, res, next) => { try { const id = req.body?.transactionId; if (!/^[a-f\d]{24}$/i.test(String(id))) return bodyError(res, "transactionId is required."); const transaction = await Transaction.findOne({ _id: id, clientId: req.auth.clientId, connectionId: req.connection.connectionId }); if (!transaction) return res.status(404).json({ status: "ERROR", code: "TRANSACTION_NOT_FOUND", message: "Transaction was not found." }); const result = await hagoService.reconcileMutationReadOnly(req.connection, req.body?.history || {}); return result.ok ? res.json({ status: "SUCCESS", transaction: publicTransaction(transaction), reconciliation: { status: "MANUAL_REVIEW_REQUIRED", history: result.history } }) : readonlyFailure(res, result, "Unable to reconcile transaction."); } catch (error) { return next(error); } };
 
