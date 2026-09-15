@@ -13,7 +13,6 @@ const { validNobleType } = require("../integrations/hago/nobility");
 function bodyError(res, message, code = "INVALID_REQUEST") { return res.status(400).json({ status: "ERROR", code, message }); }
 function requireTarget(body) { return typeof body?.targetId === "string" && body.targetId.trim().length > 0 ? body.targetId.trim() : null; }
 function normalizedIdempotency(value) { const key = typeof value === "string" ? value.trim() : ""; return /^[A-Za-z0-9._:-]{8,128}$/.test(key) ? key : null; }
-function nobilityTypeName(type) { return ({ 1: "Knight", 2: "Viscount", 3: "Earl", 4: "Duke" })[validNobleType(type)] || null; }
 function readonlyFailure(res, result, fallback) {
   const status = result?.kind === "TIMEOUT" ? 504 : result?.kind === "SESSION_UNAVAILABLE" || result?.kind === "NO_SESSION" ? 409 : 502;
   return res.status(status).json({ status: "ERROR", code: result?.kind || "UPSTREAM_ERROR", message: result?.message || fallback });
@@ -110,13 +109,11 @@ exports.previewNobility = (req, res) => { const type = req.body?.nobilityType; r
 async function persistV2Intent({ req, serviceType, amount, nobilityType }) {
   const targetId = requireTarget(req.body); const idempotencyKey = normalizedIdempotency(req.get("Idempotency-Key"));
   if (!targetId || !idempotencyKey || (serviceType !== "NOBILITY" && (!Number.isFinite(Number(amount)) || Number(amount) <= 0))) return { error: { message: "targetId, amount where applicable, and a valid Idempotency-Key are required." } };
-  const persistedNobilityType = serviceType === "NOBILITY" ? nobilityTypeName(nobilityType) : null;
-  if (serviceType === "NOBILITY" && !persistedNobilityType) return { error: { message: "A numeric nobilityType is required." } };
   const intent = { connectionId: req.connection.connectionId, targetId, serviceType, amount: serviceType === "NOBILITY" ? 0 : Number(amount), nobilityType: serviceType === "NOBILITY" ? nobilityType : null };
   const intentFingerprint = fingerprint(intent);
   const existing = await Transaction.findOne({ clientId: req.auth.clientId, idempotencyKey });
   if (existing) return { existing, match: sameIntent(existing, intentFingerprint) };
-  try { return { intent, intentFingerprint, transaction: await Transaction.create({ targetId, serviceType, amount: intent.amount, nobilityType: persistedNobilityType, clientId: req.auth.clientId, connectionId: req.connection.connectionId, idempotencyKey, intentFingerprint, status: "PENDING", upstreamStatus: "NOT_SENT", referenceId: null }) }; }
+  try { return { intent, intentFingerprint, transaction: await Transaction.create({ targetId, serviceType, amount: intent.amount, nobilityType, clientId: req.auth.clientId, connectionId: req.connection.connectionId, idempotencyKey, intentFingerprint, status: "PENDING", upstreamStatus: "NOT_SENT", referenceId: null }) }; }
   catch (error) { if (error?.code !== 11000) throw error; const concurrent = await Transaction.findOne({ clientId: req.auth.clientId, idempotencyKey }); return { existing: concurrent, match: concurrent && sameIntent(concurrent, intentFingerprint) }; }
 }
 
